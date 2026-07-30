@@ -4,23 +4,25 @@ A collection of [Agent Skills](https://agentskills.io/) for NVIDIA Isaac Sim whi
 
 ## Install
 
-Install with the [`skills` CLI](https://github.com/vercel-labs/skills). That is the standard way to install this skill.
+Install with the [`skills` CLI](https://github.com/vercel-labs/skills).
 
 Global install:
 
 ```sh
-npx skills add kaweees/isaacsim-skill -g
+npx skills add kaweees/isaacsim-skill -g        # prompt to choose skills and agents
+npx skills add kaweees/isaacsim-skill --all -g  # install every skill for every agent
 ```
 
 Project install:
 
 ```sh
-npx skills add kaweees/isaacsim-skill --project
+npx skills add kaweees/isaacsim-skill           # prompt to choose skills and agents
+npx skills add kaweees/isaacsim-skill --all     # install every skill for every agent
 ```
 
 ## After install
 
-1. Set the env vars the robotics skills expect (see [skills/SKILLS.md](skills/SKILLS.md)):
+1. Set the env vars used by the skills (see the [environment contract](skills/SKILLS.md#environment-contract)):
 
    | Variable | Purpose | Example |
    | --- | --- | --- |
@@ -29,6 +31,21 @@ npx skills add kaweees/isaacsim-skill --project
    | `$WORKSPACE_DIR` | Outputs and scratch space | project path or `~/.cache/isaacsim-skill` |
 
 2. Start with the catalog and entry skills: [skills/SKILLS.md](skills/SKILLS.md), then `meta-skills` and `isaac-sim-orchestrator`.
+
+## Layout
+
+```
+.
+├── README.md
+├── LICENSE
+├── skills/
+│   ├── SKILLS.md            # Catalog and how skills compose
+│   ├── isaac-sim-orchestrator/
+│   ├── physics-simulation/
+│   └── ...                  # One directory per skill (each has SKILL.md)
+```
+
+Each skill is a folder under `skills/` with a `SKILL.md` plus optional `scripts/` and `references/`. Format details: [agentskills.io specification](https://agentskills.io/specification).
 
 ## License
 
