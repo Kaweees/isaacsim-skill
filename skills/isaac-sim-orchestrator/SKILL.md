@@ -30,7 +30,7 @@ Run `nvidia-smi` at session start to size `num_envs` and pick RT2 vs PathTracing
 
 ## Task decomposition
 
-For any request, run all four phases. The specific steps inside each phase depend on the goal; identify capabilities first, then verify each in isolation before combining.
+For any request, run all three phases. The specific steps inside each phase depend on the goal; identify capabilities first, then verify each in isolation before combining.
 
 ### Phase 1 — Verify foundations
 
@@ -38,7 +38,7 @@ For any request, run all four phases. The specific steps inside each phase depen
 - Cross-check the request against documented Isaac Sim features and APIs.
 - For each capability, look up an existing skill:
   - Skill exists -> load it, follow its procedure.
-  - Skill missing -> build one inline. Mark its frontmatter `status: draft`, flag it `HIGH PRIORITY` in `skill-distillation`, tell the user upfront, and shorten iteration cycles (share intermediate results, ask targeted questions early).
+  - Skill missing -> consult Isaac Sim documentation and local examples, then verify the capability in isolation.
 - Write the feature -> skill mapping into the task `WORKLOG.md` before 1b.
 
 **1b. Foundation verification** (capability by capability):
@@ -55,15 +55,6 @@ Combine verified foundations one at a time. Re-run stability/correctness checks 
 - Validate output visually or programmatically. Task success, not just script completion.
 - Add output-specific requirements (writers, annotations, video capture, DR).
 - Package and hand off with a short summary.
-
-### Phase 4 — Distill (mandatory)
-
-- List iterations, failures, workarounds.
-- Record user corrections.
-- Classify each lesson: new skill, skill update, procedure fix, or `MEMORY.md` fact.
-- Update the skill files; re-read to confirm a fresh agent can follow them.
-
-See `skill-distillation` for the full procedure. Phase 4 is not optional.
 
 ## Sub-agent rules
 
@@ -268,4 +259,3 @@ Capture: every 4th step (15 fps)
 - Never import torch before `timeline.play()`.
 - Log GPU memory every epoch.
 - Lazy-load HoD assets (decompress on demand).
-- Run `skill-distillation` (step 5 of the request loop) at task end. Capture lessons in the relevant SKILL.md, not in scratch memory.

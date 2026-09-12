@@ -30,7 +30,7 @@ npx skills add kaweees/isaacsim-skill --all     # install every skill for every 
    | `$ISAAC_LAB_DIR` | Isaac Lab root | `$ISAAC_SIM_DIR/IsaacLab` |
    | `$WORKSPACE_DIR` | Outputs and scratch space | project path or `~/.cache/isaacsim-skill` |
 
-2. Start with the catalog and entry skills: [skills/SKILLS.md](skills/SKILLS.md), then `meta-skills` and `isaac-sim-orchestrator`.
+2. Start with the catalog: [skills/SKILLS.md](skills/SKILLS.md), then `isaac-sim-orchestrator`.
 
 ## Layout
 

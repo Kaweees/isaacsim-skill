@@ -17,21 +17,17 @@ the descriptions below.
 
 | Layer | Purpose | Source |
 |---|---|---|
-| Repo-native dev | Build, test, debug, profile, document, operate this Isaac Sim source repo | Authored against this repo |
+| Repo-native tools | Control, profile, and validate a built Isaac Sim | Authored against the Isaac Sim source tree |
 | Robotics-sim | Build, render, validate Isaac Sim simulations as a downstream user | Imported from the isaac-claw library |
 
-Repo-native skills run inside this repo (`./build.sh`, `tools/ci/`, `./repo.sh
-docs`, the `python_server` socket). Robotics-sim skills drive a built Isaac
-Sim from a script (`SimulationApp`, `isaacsim.core.experimental.*`, USD
-authoring).
+Repo-native skills use an Isaac Sim release build, benchmark outputs, or the
+`python_server` socket. Robotics-sim skills drive a built Isaac Sim from a
+script (`SimulationApp`, `isaacsim.core.experimental.*`, USD authoring).
 
 ---
 
 ## Quick index
 
-<!-- AUTOREMOVE: BEGIN -->
-- [Repo-native developer skills (dev-only)](#repo-native-developer-skills-dev-only) — build, CI, debug, doc-snippets
-<!-- AUTOREMOVE: END -->
 - [Repo-native public skills](#repo-native-public-skills) — remote-control, profile, validate
 - [Foundations & operating loop](#foundations--operating-loop) — what every robotics-sim session loads
 - [Robot asset pipeline](#robot-asset-pipeline) — URDF → USD
@@ -43,29 +39,13 @@ authoring).
 - [Rendering & lighting](#rendering--lighting) — RT2 production rendering
 - [USD pipeline](#usd-pipeline) — composition, scaling, material binding
 - [ROS 2 integration](#ros-2-integration) — Nav2, multi-robot bridges
-- [Agent meta](#agent-meta) — composition patterns, distillation
 - [How the library composes](#how-the-library-composes) — pipeline diagrams
 
 ---
 
-<!-- AUTOREMOVE: BEGIN -->
-## Repo-native developer skills (dev-only)
-
-Operate on this repo's source tree. Run from the repo root. Excluded from published packages.
-
-| Skill | What it does |
-|---|---|
-| [`build-docs`](_internal/build-docs/SKILL.md) | Build the Isaac Sim user guide / API docs (full or partial), serve them locally for preview, and run the pre-commit formatter. |
-| [`cicd`](_internal/cicd/SKILL.md) | Navigate this repo's GitLab pipelines: stages, jobs, variables, common debug flows, and the IsaacLab / IsaacSim dashboard subcommands under `tools/ci/dashboards/`. |
-| [`debug-with-local-kit`](_internal/debug-with-local-kit/SKILL.md) | Build Kit from source, link Isaac Sim against the local Kit build, add debug prints / step through Kit code, and investigate Kit-level rendering / multitick / sensor issues. |
-| [`doc-snippets`](_internal/doc-snippets/SKILL.md) | Author and runtime-test the Python code samples shown in Isaac Sim user docs (`.py` + `literalinclude`, the snippet test runner, async vs `SimulationApp` styles, common pitfalls). |
-
----
-<!-- AUTOREMOVE: END -->
-
 ## Repo-native public skills
 
-Operate on this repo's source tree. Shipped in published packages.
+Operate on an Isaac Sim build or its benchmark outputs. Shipped in published packages.
 
 | Skill | What it does |
 |---|---|
@@ -77,13 +57,11 @@ Operate on this repo's source tree. Shipped in published packages.
 
 ## Foundations & operating loop
 
-Loaded by default for any robotics-sim session, plus the distillation step.
+Entry point, validation, and troubleshooting for robotics-sim sessions.
 
 | Skill | What it does |
 |---|---|
 | [`isaac-sim-orchestrator`](isaac-sim-orchestrator/SKILL.md) | Top-level dispatcher: turns natural-language requests into runnable sims. Declares the env-var contract every other skill assumes (`$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`, `$CIP_ROOT`). Routes to `usd-pipeline`, `isaac-sim-rendering`, `isaac-sim-validator`, `physics-simulation`. |
-| [`meta-skills`](meta-skills/SKILL.md) | Composition patterns + Meta-Skilling Framework. Read first to learn how to navigate, compose, and author skills. |
-| [`skill-distillation`](skill-distillation/SKILL.md) | *Always-on* — step 5 of every request loop: capture what you learned before delivering. |
 | [`isaac-sim-validator`](isaac-sim-validator/SKILL.md) | Final QA gate before delivery: rejects black frames, hardcoded user paths, deprecated `omni.isaac.core` imports, missing lights, mounting bugs. |
 | [`isaac-sim-troubleshooting`](isaac-sim-troubleshooting/SKILL.md) | Kit 110 hang/freeze/perf reference — startup hangs, MDL freezes, physics stepping hangs, Replicator hangs, Hydra issues. |
 
@@ -176,17 +154,6 @@ Shared substrate plus runtime / SDG specializations.
 
 ---
 
-## Agent meta
-
-Library navigation and skill authoring.
-
-| Skill | What it does |
-|---|---|
-| [`meta-skills`](meta-skills/SKILL.md) | Composition patterns, Stackability, MSF five phases (Discovery, Practice, Capture, Validation, Iteration), the SKILL.md template. |
-| [`skill-distillation`](skill-distillation/SKILL.md) | Step 5 of every request loop — generalization rule, classification table, draft-skill promotion gates. |
-
----
-
 ## Environment contract
 
 All robotics-sim skills assume these shell variables (set in your agent config
@@ -259,32 +226,11 @@ isaac-sim-rendering (RT2 + ACES production)
 isaac-sim-validator (final QA gate)
 ```
 
-<!-- AUTOREMOVE: BEGIN -->
-### Repo-native dev workflows
-
-```
-build-docs ─────────► serve docs locally ─────────► doc-snippets
-   │                                                    │
-   │                                                    ▼
-   │                                            (snippet test runner)
-   ▼
-cicd ────► investigate pipeline / job ──┐
-                                        │
-debug-with-local-kit ─► local Kit build ┤
-                                        ▼
-profile-isaac-sim ────► tracy capture ► validation-diff-gifs
-                                        │
-                                        ▼
-isaac-sim-remote ────► drive running Isaac Sim from agent
-```
-
 ---
-<!-- AUTOREMOVE: END -->
-
 
 ## Robotics-sim skills (read order)
 
-Read in this order if you can only load a slice. Item 21 is the always-on pair.
+Read in this order if you can only load a slice.
 
 | # | Skill | What it gives you |
 |---|---|---|
@@ -308,7 +254,6 @@ Read in this order if you can only load a slice. Item 21 is the always-on pair.
 | 18 | [`usd-composition-architecture`](usd-composition-architecture/SKILL.md) | NVIDIA's layered USD pattern |
 | 19 | [`isaac-sim-validator`](isaac-sim-validator/SKILL.md) | Final QA gate before delivery |
 | 20 | [`occupancy-map`](occupancy-map/SKILL.md) | Generate ROS-compatible occupancy maps from USD warehouses |
-| 21 | [`meta-skills`](meta-skills/SKILL.md) + [`skill-distillation`](skill-distillation/SKILL.md) | Always-on pair: navigation + step-5 capture |
 
 ---
 
@@ -321,8 +266,8 @@ Read in this order if you can only load a slice. Item 21 is the always-on pair.
 
 ## How to navigate
 
-- **New to this repo?** Start with [Repo-native developer skills](#repo-native-developer-skills-dev-only) — `build-docs`, `cicd`, `debug-with-local-kit`.
-- **Starting a new sim task?** → `meta-skills` → `isaac-sim-orchestrator` → match capability to the category tables above.
+- **New to this repo?** Start with the [Quick index](#quick-index) to find the relevant skill.
+- **Starting a new sim task?** → `isaac-sim-orchestrator` → match capability to the category tables above.
 - **Bringing in a new robot?** → [Robot asset pipeline](#robot-asset-pipeline) → [Physics simulation](#physics-simulation).
 - **Generating synthetic data?** → [Synthetic data generation](#synthetic-data-generation).
 - **Rendering?** → `isaac-sim-rendering` is the source of truth.
@@ -330,4 +275,4 @@ Read in this order if you can only load a slice. Item 21 is the always-on pair.
 
 ---
 
-*Library size: 29 skills (7 repo-native + 22 robotics-sim). Last consolidation: 2026-05-21.*
+*Library size: 23 skills (3 repo-native + 20 robotics-sim).*
