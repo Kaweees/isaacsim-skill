@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -14,11 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Default — full Isaac Sim experience with rendering enabled
-./kit/kit apps/isaacsim.exp.full.kit --exec "my_script.py"
+"""Frame/offset helpers for tool-frame motion targets."""
 
-# Headless physics-only batch
-./kit/kit apps/isaacsim.exp.full.kit \
-    --no-window \
-    --/app/renderer/enabled=false \
-    --exec "physics_batch.py"
+import numpy as np
+
+
+def tool_local_contact_offset(tool_position, tool_rotation_matrix, contact_point):
+    """Express a world-space contact point relative to the controller tool frame."""
+    return tool_rotation_matrix.T @ (contact_point - tool_position)
+
+
+def tool_target_from_contact_target(contact_target, tool_rotation_matrix, contact_offset_tool):
+    """Convert a desired physical contact point into a controller tool target."""
+    return contact_target - tool_rotation_matrix @ contact_offset_tool

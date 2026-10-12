@@ -1,20 +1,54 @@
 ---
 name: manipulation-ik
-description: >
-  Robot manipulation in Isaac Sim 6 / Kit 110: differential inverse kinematics
-  via `Articulation` + `get_jacobian_matrices`, schema-native IK via
-  `isaacsim.robot.poser.RobotPoser` (with named-pose storage / replay), grasp
-  frames, `FixedJoint` and `SurfaceGripper` grasping, hybrid IK + joint-space
-  control, and obstacle-aware motion via `isaacsim.robot_motion.cumotion`
-  (`RmpFlowController`) or `isaacsim.robot_motion.pink` (`PinkIKController`).
-  Use when controlling a robot arm to pick / place / follow, implementing
-  IK-based end-effector control, storing or applying named poses, choosing
-  between native IK / cuMotion / PINK / Lula, or validating pick-and-place.
+description: "Differential IK, grasp frames, and joint-space manipulation in Isaac Sim 6. Use for arm control, grasps, and contact validation."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Manipulation IK
 
+## Purpose
+
+Control manipulator arms with differential IK, schema-native poser workflows, grasp frames, fixed-joint grasping, and hybrid IK plus joint-space motion.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Patterns reference Isaac Sim docs and local example files; embedded code is a pattern sketch, not the canonical source. Always read the linked example; upstream code reflects the installed Isaac Sim version.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/differential_ik_sketch.py` | Conceptual sketch for custom Jacobian-based differential IK | see script --help |
+| `scripts/robot_poser_example.py` | Schema-native IK + named-pose workflow using isaacsim.robot.poser | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/differential_ik_sketch.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## When to use
 
@@ -28,31 +62,30 @@ Patterns reference Isaac Sim docs and local example files; embedded code is a pa
 
 | Stack | Module | When |
 |---|---|---|
-| Differential IK on `Articulation` | `isaacsim.core.experimental.prims.Articulation` + per-robot wrapper | direct end-effector control; matches `isaacsim.robot.experimental.manipulators.examples.*` |
-| Schema-native IK + named poses | `isaacsim.robot.poser.RobotPoser` (LM solver via `usd.schema.isaac.robot_schema.IKSolverRegistry`) | offline pose authoring, persisted "pick_position" / "approach" poses |
-| Obstacle-aware reactive | `isaacsim.robot_motion.cumotion.RmpFlowController` (+ YAML configs in `robot_configurations/`) | dynamic obstacle avoidance, reactive trajectories |
+| Differential IK on `Articulation` | `isaacsim.core.experimental.prims.Articulation` + custom Jacobian solver | specialized direct end-effector control; no maintained example wrapper |
+| Schema-native IK + named poses | `isaacsim.robot.poser.RobotPoser` (LM solver via `isaacsim.robot.poser.IKSolverRegistry`) | offline pose authoring, persisted "pick_position" / "approach" poses |
+| Obstacle-aware reactive | `isaacsim.robot_motion.cumotion.RmpFlowController` via `motion-generation` | dynamic obstacle avoidance, reactive trajectories |
 | Pinocchio / PINK | `isaacsim.robot_motion.pink.PinkIKController` | alternative full IK stack with joint limits / task hierarchies |
 | Lula motion generation | `isaacsim.robot_motion.lula` + `isaacsim.robot_motion.motion_generation` | legacy; supported but use one of the above for new work ([rename map](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_4_5/extensions_renaming.html)) |
 
 ## Local example files (canonical source)
 
-Relative to `$ISAAC_SIM_DIR/source/standalone_examples/api/isaacsim.robot.experimental.manipulators/`:
+Relative to `$ISAAC_SIM_DIR/source/standalone_examples/api/isaacsim.robot_motion.examples/manipulation/`:
 
 | Topic | Path |
 |---|---|
-| Differential IK (UR10 follow-target, `--ik-method`) | `universal_robots/follow_target_with_ik.py` |
-| RMP flow (UR10) | `universal_robots/follow_target_with_rmpflow.py` |
-| RMP flow (Franka) | `franka/follow_target_with_rmpflow.py` |
-| Pick & place (Franka) | `franka/pick_place.py` |
-| Stacking (Franka) | `franka/stacking.py` |
-| Multi-task | `franka/multiple_tasks.py` |
-| UR10 stacking | `universal_robots/stacking.py` |
+| Follow target | `follow_target.py` |
+| Pick and place | `pick_place.py` |
+| Stacking | `stacking.py` |
+| Multiple tasks | `multiple_tasks.py` |
 
-Robot-side implementations: `source/extensions/isaacsim.robot.experimental.manipulators.examples/isaacsim/robot/experimental/manipulators/examples/{franka,universal_robots}/*.py` (e.g. `UR10`, `Franka` classes — `differential_inverse_kinematics`, `set_end_effector_pose`, `reset_to_default_pose`).
+Shared implementations are under
+`source/extensions/isaacsim.robot_motion.examples/isaacsim/robot_motion/examples/manipulation/`
+(`ManipulationScenario`, robot configurations, controllers, and interactive task backends).
 
 Legacy/deprecated examples under `$ISAAC_SIM_DIR/source/standalone_examples/deprecated/api/isaacsim.robot.manipulators/`.
 
-> **Migration:** for the `omni.isaac.franka` / `omni.isaac.universal_robots` / `omni.isaac.manipulators` → `isaacsim.robot.manipulators*` rename map (including the experimental examples extension), see [Renaming Extensions](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_4_5/extensions_renaming.html).
+> **Migration:** use `isaacsim.robot_motion.examples` for maintained manipulation examples.
 
 ## Docs references
 
@@ -65,7 +98,7 @@ Legacy/deprecated examples under `$ISAAC_SIM_DIR/source/standalone_examples/depr
 
 ## Differential IK pattern (modern `Articulation`)
 
-Pattern source: `UR10.differential_inverse_kinematics` (UR wrapper) + `UR10FollowTarget.move_to_target`. The wrapper does:
+The conceptual solver does:
 
 1. Get the Jacobian: `self.get_jacobian_matrices()` (shape includes a virtual base for fixed-base robots; always slice past the base DOFs).
 2. Compute the 6-DOF pose error from current EE pose to goal.
@@ -74,25 +107,9 @@ Pattern source: `UR10.differential_inverse_kinematics` (UR wrapper) + `UR10Follo
    - `pseudoinverse`, `transpose`, `singular-value-decomposition` also available.
 4. Push as `set_dof_position_targets(current + dq, dof_indices=arm_dofs)`.
 
-```python
-# Conceptual sketch — see ur10.py and follow_target_with_ik.py for the live code
-from isaacsim.core.experimental.prims import Articulation, RigidPrim
+`differential_ik_step(arm, end_effector, end_effector_link_index, target_pos, target_quat, arm_dofs, method, damping, scale)` — compute Jacobian, solve IK delta, apply via `set_dof_position_targets`. This is a conceptual pattern; use the maintained RMPflow examples for production control.
 
-arm = MyArm("/World/robot", create_robot=True)
-ee  = arm.end_effector_link
-J   = arm.get_jacobian_matrices().numpy()[:, arm.end_effector_link_index - 1, :, :arm_dofs]
-cur_pos, cur_q = ee.get_world_poses()
-dq = arm.differential_inverse_kinematics(
-    jacobian_end_effector=J,
-    current_position=cur_pos.numpy(),
-    current_orientation=cur_q.numpy(),
-    goal_position=target_pos,
-    goal_orientation=target_quat,
-    method="damped-least-squares",
-    method_cfg={"scale": 1.0, "damping": 0.05, "min_singular_value": 1e-5},
-)
-arm.set_dof_position_targets(cur_dofs[:, :arm_dofs] + dq, dof_indices=list(range(arm_dofs)))
-```
+See [`scripts/differential_ik_sketch.py`](scripts/differential_ik_sketch.py).
 
 Tuning (start conservative, increase after stability):
 
@@ -111,35 +128,15 @@ Pure differential IK on under-actuated arms fails on:
 - Configurations near kinematic singularities.
 - Sweeping through joint limits.
 
-Pattern: IK for precision (approach, descent, final placement), joint-space interpolation for long transport (lift, traverse, descend). See `franka/pick_place.py` for the sequenced version Isaac Sim ships.
+Pattern: IK for precision (approach, descent, final placement), joint-space interpolation for long transport (lift, traverse, descend). See the maintained manipulation controllers for sequenced examples.
 
 ## Schema-native IK + Named Poses (RobotPoser)
 
-For pose authoring, persistence, and replay use `isaacsim.robot.poser`. It wraps a kinematic chain (from `usd.schema.isaac.robot_schema`) and provides IK plus a named-pose library stored as `IsaacNamedPose` prims on the robot.
+For pose authoring, persistence, and replay use `isaacsim.robot.poser`. It owns the kinematic chain and IK implementation and stores named-pose data as `IsaacNamedPose` prims on the robot.
 
-```python
-from isaacsim.robot.poser import (
-    RobotPoser, Transform,
-    store_named_pose, apply_pose_by_name,
-    list_named_poses, delete_named_pose,
-    export_poses, import_poses,
-    validate_robot_schema,
-)
+`solve_and_store_pose(stage, robot_prim, start_prim, end_prim, target_pos, target_orient, pose_name)` — validate schema, solve IK, apply joints, store as named pose. `apply_stored_pose` / `export_all_poses` for replay and persistence.
 
-# Robot must carry IsaacRobotAPI (applied during URDF/MJCF import).
-validate_robot_schema(stage, robot_prim)
-
-poser = RobotPoser(stage, robot_prim, start_prim, end_prim)
-target = Transform(position=[0.5, 0.2, 0.8], orientation=[1, 0, 0, 0])
-result = poser.solve_ik(target)
-if result.success:
-    poser.apply_pose(result.joints)
-    store_named_pose(stage, robot_prim, "pick_position", result)
-
-# Later:
-apply_pose_by_name(stage, robot_prim, "pick_position")
-export_poses(stage, robot_prim, "/path/to/poses.json")
-```
+See [`scripts/robot_poser_example.py`](scripts/robot_poser_example.py).
 
 Standalone helpers (no `RobotPoser` needed) for FK / DOF target application:
 
@@ -150,60 +147,15 @@ apply_joint_state_anchored(stage, robot_prim, joint_values, # keep anchor at wor
                            anchor_prim=base_link_prim)
 ```
 
-The IK solver is pluggable via `usd.schema.isaac.robot_schema.IKSolverRegistry`; the bundled LM solver (`robot_schema.lm_ik`) is the default.
+The IK solver is pluggable via `isaacsim.robot.poser.IKSolverRegistry`; the bundled LM solver (`isaacsim.robot.poser.lm_ik`) is the default.
 
-## Obstacle-aware motion (cuMotion / PINK)
+## Obstacle-aware motion controllers
 
-Use the documented loaders for both stacks; do not hand-construct configs. Read the full tutorials before extending:
-
-- [cuMotion RMP flow tutorial](https://docs.isaacsim.omniverse.nvidia.com/latest/cumotion/tutorial_rmpflow.html) -> `docs/isaacsim/cumotion/tutorial_rmpflow.rst`
-- [cuMotion world interface](https://docs.isaacsim.omniverse.nvidia.com/latest/cumotion/tutorial_world_interface.html)
-- [cuMotion robot configuration](https://docs.isaacsim.omniverse.nvidia.com/latest/cumotion/tutorial_robot_configuration.html)
-- [PINK IK controller tutorial](https://docs.isaacsim.omniverse.nvidia.com/latest/pink/tutorial_ik_controller.html) -> `docs/isaacsim/pink/tutorial_ik_controller.rst`
-- [PINK robot configuration](https://docs.isaacsim.omniverse.nvidia.com/latest/pink/tutorial_robot_configuration.html)
-
-### cuMotion (RMP flow)
-
-```python
-from isaacsim.robot_motion.cumotion import (
-    RmpFlowController, CumotionWorldInterface, load_cumotion_supported_robot,
-)
-from isaacsim.robot_motion.motion_generation import RobotState
-
-robot = load_cumotion_supported_robot("franka")           # config + chain
-world = CumotionWorldInterface(...)                        # populate obstacles
-ctrl  = RmpFlowController(
-    name="rmp_franka",
-    robot=robot,
-    world_interface=world,
-)
-
-# Required: reset() before the first forward() each episode.
-ctrl.reset(RobotState(...))                                # estimated current state
-action = ctrl.forward(
-    estimated_state=RobotState(...),
-    setpoint_state=RobotState(...),                        # target EE pose
-)
-```
-
-### PINK (Pinocchio-based IK)
-
-```python
-from isaacsim.robot_motion.pink import PinkIKController, load_pink_supported_robot
-
-pink_robot = load_pink_supported_robot("franka")           # PinkRobot wrapper
-controller = PinkIKController(
-    name="pink_franka",
-    robot=pink_robot,
-    tasks=[...],                                            # frame/joint/posture tasks
-)
-```
-
-Use `load_pink_robot(...)` when authoring a non-bundled robot. See the `pink/tutorial_robot_configuration.rst` walkthrough.
-
-### Grasps
-
-`isaacsim.replicator.grasping` (`GraspingManager`, `GraspPhase`) drives grasp-dataset workflows and grasp-pose generation; see `source/standalone_examples/api/isaacsim.replicator.grasping/grasping_workflow_sdg.py`.
+For cuMotion and RMPflow controller setup, including world binding,
+`RobotState`, control-loop timing, reset sequencing, supported-robot configs,
+and obstacle synchronization, use `motion-generation`. This skill only decides
+when that stack is appropriate and validates the manipulation/grasp side. Use
+documented loaders; do not hand-construct controller configs.
 
 ## Grasp frame discovery (do this first)
 
@@ -215,13 +167,17 @@ Most assets do not ship with a grasp frame. Before any IK:
 
 ## Grasping
 
-### `FixedJoint` (simple, reliable for rigid grasps)
+### `FixedJoint` (assisted rigid grasps only)
 
-Pattern source: `franka/pick_place.py` plus `UsdPhysics.FixedJoint`. Always compute the gripper -> object relative transform at the moment of contact; never hardcode the offset. Hardcoded offsets + high stiffness produce PhysX snap and explosion.
+Pattern source: the maintained interactive `pick_place_task.py` plus `UsdPhysics.FixedJoint`. Always compute the gripper -> object relative transform at the moment of contact; never hardcode the offset. Hardcoded offsets + high stiffness produce PhysX snap and explosion.
+
+Friction-only parallel grasps on a free rigid body are marginal: they may hold on lift but slip under transport acceleration. When the task allows an assisted grasp, prefer `FixedJoint` over tuning grip force or friction: attach at contact, keep the gripper visually closed, and remove the joint on release so the object settles under gravity.
+
+For strict contact-only tasks, the object must move through the gripper's collision/contact forces. Do not use `FixedJoint`, D6 joints, attachments, pose-follow, object pose writes, kinematic holds, disabled dynamics, or post-release stabilization as the success path.
 
 ### `SurfaceGripper` (vacuum / magnetic, used by UR10 example)
 
-Pattern source: `UR10` (`open_gripper`, `close_gripper`).
+Pattern source: `manipulation/ur10_palletizing.py` (`DirectSurfaceGripper`).
 
 ```python
 from isaacsim.robot.surface_gripper import _surface_gripper as surface_gripper
@@ -241,15 +197,26 @@ For generating grasp datasets, see `isaacsim.replicator.grasping` (`GraspingMana
 
 ## Grasp validation (feedback loop)
 
-After executing a pick-and-place, validate at three checkpoints:
+Before executing or capturing a manipulation demo, validate the target object. Any
+object claimed as picked/pulled/placed/pushed/grasped must be physics-backed: a rigid
+body or articulation state, collision geometry, task-appropriate mass/inertia, and
+runtime pose readback (physics view or prim API). Visual-only meshes are fine for
+probes and debug, but the object in a final claimed result must be physics-backed.
 
-| Checkpoint | Check | Failure action |
+After executing, validate **object state** (not just tool pose) at three gates, in order, stopping at the first failure:
+
+| Gate | Required evidence | Failure action |
 |---|---|---|
-| Grasp contact | fingers visually around object; object within ~2 cm of grasp frame | adjust grasp frame offset or IK target |
-| Lift success | object Z rises with the gripper, not left behind | `FixedJoint` missing or wrong offset; gripper not engaged |
-| Place success | object resting on target within ~5 cm | transport trajectory missed target |
+| Grasp / contact | fingers around object; object within ~2 cm of grasp frame | adjust grasp frame offset or IK target |
+| Lift / hold | object leaves the support and holds above the lift threshold for a measured window; XY drift bounded; velocity settles | gripper not engaged; grasp offset wrong (assisted: `FixedJoint` missing/wrong) |
+| Place / release | gripper opens, object settles on support within ~5 cm; final pose/velocity meet thresholds; previously placed objects still pass | transport trajectory missed target |
 
-Smooth motion is necessary but not sufficient. Do not declare success unless all three pass.
+- Success is measured from object pose/orientation, not tool pose: a tool can converge while the object slips, ejects, or stays high. Smooth motion is necessary but not sufficient.
+- Placement phase gates should use released object pose, not only end-effector convergence.
+- Treat motion-phase timeouts as failures unless the phase is an intentional dwell or settle.
+- Multi-object: revalidate the already-placed prefix after every later approach, place, and retreat.
+- Require visual evidence from the latest run: fixed-camera video or screenshots showing the robot, object, support surface, grasp/contact area, and markers.
+- Strict contact-only tasks must succeed through contact forces alone (no `FixedJoint` or other assistance, see above). If a gate fails, report it with numeric and visual evidence; never add hidden pose assistance to make the output look successful.
 
 ## Rules
 

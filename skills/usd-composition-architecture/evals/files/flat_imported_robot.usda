@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    defaultPrim = "Robot"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+# Monolithic import: meshes, physics, and interface opinions live on one layer.
+def Xform "Robot" (
+    prepend apiSchemas = ["PhysicsArticulationRootAPI", "PhysicsMassAPI"]
+) {
+    float physics:mass = 12.0
+
+    def Mesh "visual_mesh" {
+    }
+
+    def Cube "collision_proxy" {
+        double size = 0.4
+    }
+}

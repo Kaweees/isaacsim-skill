@@ -1,20 +1,35 @@
 ---
 name: isaac-camera
-description: >
-  Camera creation, configuration, calibration, render products, lens
-  distortion, and runtime sensor wrapping in Isaac Sim 6 / Kit 110.
-  Modern path: `isaacsim.sensors.experimental.rtx.RtxCamera` (authoring) +
-  `CameraSensor` / `TiledCameraSensor` / `SingleViewDepthCameraSensor`
-  (runtime) on top of `UsdGeomCamera`. Covers AOVs / annotators,
-  OpenCV / fisheye / LUT lens distortion via `OmniLensDistortion*API`
-  schemas, OpenCV intrinsics conversion, animation, and Replicator
-  randomization. Use when creating/configuring camera prims, attaching
-  annotators, applying distortion models, converting real-world
-  calibration to Omniverse units, animating cameras, or generating
-  synthetic data with Replicator.
+description: "USD camera setup, render products, intrinsics, and lens distortion. Use when configuring Isaac Sim cameras."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Camera (Isaac Sim 6 / Kit 110)
+
+## Purpose
+
+Create and configure USD cameras, render products, intrinsics, AOVs, and lens distortion models for Isaac Sim 6 sensor pipelines.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 Two layers stack:
 
@@ -56,9 +71,9 @@ Meter stage: a 25 mm focal length is `0.025`.
 
 Camera looks down `-Z`; `+Y` is up, `+X` is right. Same regardless of stage up-axis.
 
-## Path A — RtxCamera + CameraSensor (recommended)
+## Creating and capturing — RtxCamera + CameraSensor
 
-`RtxCamera` wraps a `UsdGeom.Camera` prim with `OmniSensorAPI` applied; `CameraSensor` builds a Replicator render product on top and exposes annotators. Both extend the `isaacsim.core.experimental.prims.XformPrim` family, so the standard pose / transform methods apply.
+`RtxCamera` + `CameraSensor` is the way to create a camera and capture from it in Isaac Sim 6. `RtxCamera` wraps a `UsdGeom.Camera` prim with `OmniSensorAPI` applied; `CameraSensor` builds a Replicator render product on top and exposes annotators. Both extend the `isaacsim.core.experimental.prims.XformPrim` family, so the standard pose / transform methods apply.
 
 ```python
 from isaacsim.sensors.experimental.rtx import RtxCamera, CameraSensor
@@ -79,6 +94,13 @@ sensor = CameraSensor(
 )
 app_utils.play(commit=True)
 data = sensor.get_data("rgb")
+```
+
+Author the pose directly on `RtxCamera` (it's an `XformPrim`): pass `positions=` / `translations=` / `orientations=` (quaternion `wxyz`) to the constructor, or call `set_world_poses(...)` afterwards.
+
+```python
+cam.set_world_poses(positions=[[2.0, 2.0, 2.0]],
+                    orientations=[[1.0, 0.0, 0.0, 0.0]])   # wxyz
 ```
 
 `TiledCameraSensor` batches many cameras into one render call; useful for multi-view RL data collection. `SingleViewDepthCameraSensor` simulates stereo depth via `OmniSensorDepthSensorSingleViewAPI`.
@@ -106,61 +128,6 @@ cam = RtxCamera(
 ```
 
 Equivalent OpenCV-pinhole schema: `OmniLensDistortionOpenCvPinholeAPI` (attributes `omni:lensdistortion:opencvPinhole:{fx,fy,cx,cy,k1,k2,p1,p2,...}`). LUT-based distortion uses `OmniLensDistortionLutAPI`.
-
-## Path B — `UsdGeomCamera` + `omni.replicator.core` (no RTX wrapper)
-
-When you don't need RTX sensor features (lens distortion, ISP, tick-rate control), straight USD + Replicator works:
-
-```python
-from pxr import UsdGeom, Gf
-import omni.replicator.core as rep
-
-cam = UsdGeom.Camera.Define(stage, "/World/Cam")
-cam.GetFocalLengthAttr().Set(24.0)
-cam.GetHorizontalApertureAttr().Set(36.0)            # full-frame 35 mm equiv
-cam.GetVerticalApertureAttr().Set(20.25)
-cam.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 1000.0))
-
-rp = rep.create.render_product(cam.GetPath(), (1920, 1080))
-rgb     = rep.AnnotatorRegistry.get_annotator("rgb")
-depth   = rep.AnnotatorRegistry.get_annotator("distance_to_camera")
-semseg  = rep.AnnotatorRegistry.get_annotator("semantic_segmentation",
-                                              init_params={"colorize": True})
-normals = rep.AnnotatorRegistry.get_annotator("normals")
-for ann in (rgb, depth, semseg, normals):
-    ann.attach([rp])
-```
-
-For pose authoring use `isaacsim.core.experimental.objects.Camera` (wraps `UsdGeom.Camera` with the standard pose / scale API), or the look-at helper:
-
-```python
-from isaacsim.core.experimental.objects import Camera
-
-cam = Camera(paths="/World/Cam", positions=[2.0, 2.0, 2.0])
-cam.set_world_poses(positions=[[2.0, 2.0, 2.0]],
-                    orientations=[[1.0, 0.0, 0.0, 0.0]])
-```
-
-## OpenCV intrinsics -> USD
-
-```python
-from pxr import UsdGeom
-
-def opencv_to_usd_camera(stage, path, fx, fy, cx, cy, image_w, image_h,
-                         sensor_w_m=0.036):
-    """OpenCV intrinsics -> USD camera on a meter-stage."""
-    focal_length_m = fx * sensor_w_m / image_w
-    h_aperture     = sensor_w_m
-    v_aperture     = fy * sensor_w_m / fx   # preserve aspect
-    cam = UsdGeom.Camera.Define(stage, path)
-    cam.GetFocalLengthAttr().Set(focal_length_m)
-    cam.GetHorizontalApertureAttr().Set(h_aperture)
-    cam.GetVerticalApertureAttr().Set(v_aperture)
-    # Principal-point offset:
-    cam.GetHorizontalApertureOffsetAttr().Set((cx - image_w / 2) * sensor_w_m / image_w)
-    cam.GetVerticalApertureOffsetAttr().Set((cy - image_h / 2) * sensor_w_m / image_w)
-    return cam
-```
 
 ## Animation
 

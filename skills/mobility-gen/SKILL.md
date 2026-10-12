@@ -1,21 +1,57 @@
 ---
 name: mobility-gen
-description: >
-  Generate synthetic sensor datasets for mobile robots using Isaac Sim's MobilityGen
-  extension. Two-phase pipeline: headless trajectory recording → replay-and-render
-  for RGB/depth/seg/normals/pose data. Covers `RandomPathFollowingScenario`,
-  `RandomAccelerationScenario`, and custom robot subclassing
-  (`WheeledMobilityGenRobot`, `PolicyMobilityGenRobot`, holonomic). Use when generating
-  mobile-robot training data, recording sim trajectories, replaying with sensors, or
-  implementing a custom MobilityGenRobot. Distinct from `data-collection-sim`
-  (static-scene SDG) — this skill is robot-trajectory-driven. See `navigation-primitives`
-  for shared occupancy-map / A* / kinematics substrate; `isaac-sim-robot-navigation`
-  for non-SDG runtime nav.
+description: "MobilityGen SDG: record trajectories then replay-render sensors. Use for mobile-robot synthetic datasets."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # MobilityGen Synthetic Data Generation
 
+## Purpose
+
+Run MobilityGen two-phase SDG: record robot trajectories headlessly, then replay and render RGB/depth/segmentation/normal/pose outputs.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Two-phase pipeline: **record trajectories** (physics, no rendering) → **replay & render** (sensors added).
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/custom_footprint_robot.py` | Custom robot footprint factory for MobilityGen SDG | see script --help |
+| `scripts/holonomic_robot_subclass.py` | Example holonomic (3-wheel) MobilityGenRobot subclass (Kaya) | see script --help |
+| `scripts/record_trajectories.py` | Phase 1 trajectory recording for MobilityGen SDG | see script --help |
+| `scripts/replay_custom_robot.py` | Replay recordings with a custom robot registered at runtime | see script --help |
+| `scripts/wheeled_robot_subclass.py` | Example WheeledMobilityGenRobot subclass for custom differential-drive robots | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/holonomic_robot_subclass.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Read These Skills First
 
@@ -62,86 +98,52 @@ Extensions are **not auto-loaded**. Always pass `--enable` flags when running `p
   --enable isaacsim.replicator.mobility_gen.examples
 ```
 
-Enabling `isaacsim.replicator.mobility_gen.examples` auto-loads `isaacsim.replicator.mobility_gen` as a dependency. All extension-dependent imports must come AFTER `SimulationApp(...)` is initialized.
+Enabling `isaacsim.replicator.mobility_gen.examples` auto-loads `isaacsim.replicator.experimental.mobility_gen` as a dependency. All extension-dependent imports must come AFTER `SimulationApp(...)` is initialized.
+
+Import public names from the package root:
+
+```python
+from isaacsim.replicator.experimental.mobility_gen import (
+    ROBOTS, SCENARIOS, OccupancyMap, RecordingSession, load_scenario,
+)
+```
+
+`OccupancyMapDataValue` is not re-exported; import it from `...mobility_gen.impl.occupancy_map`.
 
 ## Phase 1: Automated Trajectory Recording (Headless)
 
 `KeyboardTeleoperationScenario` and `GamepadTeleoperationScenario` require an interactive UI. For headless batch recording use `RandomPathFollowingScenario` or `RandomAccelerationScenario`.
 
-> **API note (Kit 110):** the snippet below uses `isaacsim.core.api.objects`, `isaacsim.core.utils.stage`, and the MobilityGen `get_world` / `new_world` helpers. These wrap the legacy `isaacsim.core.api.World` flow that MobilityGen's scenario/writer plumbing expects. For new code outside MobilityGen, prefer the experimental APIs (`isaacsim.core.experimental.utils.stage`, the `isaacsim.core.simulation_manager.SimulationManager` lifecycle, and `isaacsim.core.experimental.objects` for primitives) — see the cheatsheet. Do not mix the two within a single MobilityGen session.
+> **API note (Kit 110):** MobilityGen no longer uses the legacy `World` flow.
+> `get_world()` / `new_world()` are gone, and so is `impl.utils.global_utils`.
+> Recording is driven by `RecordingSession` plus the
+> `isaacsim.core.simulation_manager.SimulationManager` lifecycle, with
+> `isaacsim.core.experimental.utils.stage` for stage I/O (note `open_stage()`
+> returns a `(bool, stage)` tuple, and `save_stage()` takes only a path).
 >
 > **Migration:** for the full `omni.isaac.*` → `isaacsim.*` mapping when porting scripts off the legacy World flow, see [Renaming Extensions](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_4_5/extensions_renaming.html).
 
+`record_trajectories(scene_usd, omap_yaml, robot_type, scenario, num_episodes, max_steps, data_dir)` — headless SimulationApp loop that builds a robot and scenario and records each episode to `$MOBILITY_GEN_DATA/recordings/`.
+
+`RecordingSession` call order — the session owns the ground plane, robot spawn, `Config` and writer, so scripts do not construct a `MobilityGenWriter` themselves:
+
 ```python
-from isaacsim import SimulationApp
-simulation_app = SimulationApp(launch_config={"headless": True})
-
-import datetime, os, tempfile
-import isaacsim.core.api.objects as objects
-import isaacsim.replicator.mobility_gen.examples
-from isaacsim.core.utils.stage import open_stage, save_stage
-from isaacsim.replicator.mobility_gen.impl.config import Config
-from isaacsim.replicator.mobility_gen.impl.occupancy_map import OccupancyMap
-from isaacsim.replicator.mobility_gen.impl.robot import ROBOTS
-from isaacsim.replicator.mobility_gen.impl.scenario import SCENARIOS
-from isaacsim.replicator.mobility_gen.impl.utils.global_utils import get_world, new_world
-from isaacsim.replicator.mobility_gen.impl.writer import MobilityGenWriter
-
-DATA_DIR = os.environ.get(
-    "MOBILITY_GEN_DATA",
-    os.path.join(os.environ.get("WORKSPACE_DIR", os.path.expanduser("~")), "MobilityGenData"),
-)
-
-SCENE_USD    = "/path/to/warehouse.usd"
-OMAP_YAML    = f"{DATA_DIR}/maps/warehouse/map.yaml"
-ROBOT_TYPE   = "CarterRobot"               # JetbotRobot | CarterRobot | H1Robot | SpotRobot
-SCENARIO     = "RandomPathFollowingScenario"  # or RandomAccelerationScenario
-NUM_EPISODES = 5
-MAX_STEPS    = 2000
-
-robot_cls    = ROBOTS.get(ROBOT_TYPE)
-scenario_cls = SCENARIOS.get(SCENARIO)
-
-config = Config(scenario_type=SCENARIO, robot_type=ROBOT_TYPE, scene_usd=SCENE_USD)
-occupancy_map = OccupancyMap.from_ros_yaml(OMAP_YAML)
-
-open_stage(SCENE_USD)
-cached_stage = os.path.join(tempfile.mkdtemp(), "stage.usd")
-save_stage(cached_stage, save_and_reload_in_place=False)
-
-world = new_world(physics_dt=robot_cls.physics_dt)
-world.initialize_simulation_context()
-objects.GroundPlane("/World/ground_plane", visible=False)
-
-robot    = robot_cls.build("/World/robot")
-scenario = scenario_cls.from_robot_occupancy_map(robot, occupancy_map)
-
-os.makedirs(os.path.join(DATA_DIR, "recordings"), exist_ok=True)
-
-for episode in range(NUM_EPISODES):
-    world.reset()
-    scenario.reset()
-
-    name   = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
-    path   = os.path.join(DATA_DIR, "recordings", name)
-    writer = MobilityGenWriter(path)
-    writer.write_config(config)
-    writer.write_occupancy_map(occupancy_map)
-    writer.copy_stage(cached_stage)
-
-    step = 0
-    while True:
-        world.step(render=False)
-        is_alive = scenario.step(step_size=robot_cls.physics_dt)
-        writer.write_state_dict_common(scenario.state_dict_common(), step)
-        step += 1
-        if not is_alive or step >= MAX_STEPS:
-            break
-
-    print(f"Episode {episode+1}/{NUM_EPISODES}: {step} steps -> {path}")
-
-simulation_app.close()
+session = RecordingSession()
+session.build(robot_cls, scenario_cls, occupancy_map,
+              scene_usd=..., cached_stage_path=..., recordings_dir=...)
+omni.timeline.get_timeline_interface().play()   # initialize() expects a playing app
+simulation_app.update()
+session.initialize()
+session.reset()
+session.enable_recording()
+while ...:
+    SimulationManager.step(steps=1)   # initialize_physics() does not start the
+    simulation_app.update()           # timeline, so update() alone won't tick physics
+    if not session.step(robot_cls.physics_dt):
+        break
 ```
+
+See [`scripts/record_trajectories.py`](scripts/record_trajectories.py).
 
 ## Phase 2: Replay & Render
 
@@ -192,6 +194,14 @@ replays/<recording_name>/
 | `CarterRobot` | Wheeled (differential) | Nova Carter, `physics_dt=0.005` |
 | `H1Robot` | Humanoid (policy) | Unitree H1, flat-terrain RL policy |
 | `SpotRobot` | Quadruped (policy) | Boston Dynamics Spot, flat-terrain RL policy |
+| `CarterMultiSensorRobot` | Wheeled, sensor rig | Rig loaded from `data/robots/carter.yaml` |
+| `JetbotMultiSensorRobot` | Wheeled, sensor rig | Rig loaded from `data/robots/jetbot.yaml` |
+| `H1MultiSensorRobot` | Humanoid, sensor rig | Rig loaded from `data/robots/h1.yaml` |
+| `SpotMultiSensorRobot` | Quadruped, sensor rig | Rig loaded from `data/robots/spot.yaml` |
+
+The four `*MultiSensorRobot` variants subclass `MobilityGenMultiSensorRobot` and
+declare their cameras in a YAML sensor-rig config instead of the
+`front_camera_*` class attributes used by the single-camera robots above.
 
 ## Available Scenarios
 
@@ -212,54 +222,9 @@ Two base classes exist depending on robot type. Both handle `build()` and `write
 
 Subclass `WheeledMobilityGenRobot`. No need to override `build()` or `write_action()`:
 
-```python
-from isaacsim.replicator.mobility_gen.examples.robots import WheeledMobilityGenRobot
-from isaacsim.replicator.mobility_gen.examples.misc import HawkCamera
-from isaacsim.replicator.mobility_gen.impl.robot import ROBOTS
+`MyRobot(WheeledMobilityGenRobot)` — example class showing all required class-level attributes (camera offsets, occupancy-map params, velocity ranges, wheel geometry) with no method overrides needed.
 
-@ROBOTS.register()
-class MyRobot(WheeledMobilityGenRobot):
-    physics_dt: float = 0.005
-    z_offset: float = 0.25
-
-    chase_camera_base_path = "chassis"
-    chase_camera_x_offset: float = -1.5
-    chase_camera_z_offset: float = 0.8
-    chase_camera_tilt_angle: float = 60.0
-
-    front_camera_base_path = "chassis/front_hawk"
-    front_camera_rotation = (0.0, 0.0, 0.0)
-    front_camera_translation = (0.2, 0.0, 0.1)
-    front_camera_type = HawkCamera
-
-    occupancy_map_radius: float = 0.5
-    occupancy_map_z_min: float = 0.1
-    occupancy_map_z_max: float = 0.5
-    occupancy_map_cell_size: float = 0.05
-    occupancy_map_collision_radius: float = 0.5
-
-    keyboard_linear_velocity_gain: float = 1.0
-    keyboard_angular_velocity_gain: float = 1.0
-    gamepad_linear_velocity_gain: float = 1.0
-    gamepad_angular_velocity_gain: float = 1.0
-
-    random_action_linear_velocity_range = (-0.3, 1.0)
-    random_action_angular_velocity_range = (-0.75, 0.75)
-    random_action_linear_acceleration_std: float = 5.0
-    random_action_angular_acceleration_std: float = 5.0
-    random_action_grid_pose_sampler_grid_size: float = 5.0
-    path_following_speed: float = 1.0
-    path_following_angular_gain: float = 1.0
-    path_following_stop_distance_threshold: float = 0.5
-    path_following_forward_angle_threshold = 0.785
-    path_following_target_point_offset_meters: float = 1.0
-
-    wheel_dof_names = ["left_wheel_joint", "right_wheel_joint"]
-    usd_url: str = "/path/to/my_robot.usd"
-    chassis_subpath: str = "chassis"
-    wheel_base: float = 0.5
-    wheel_radius: float = 0.1
-```
+See [`scripts/wheeled_robot_subclass.py`](scripts/wheeled_robot_subclass.py).
 
 Reference implementations in `isaacsim.replicator.mobility_gen.examples.robots`:
 - `JetbotRobot`: NVIDIA Jetbot, `wheel_base=0.1125`, `wheel_radius=0.03`, `chassis_subpath="chassis"`
@@ -269,107 +234,32 @@ Reference implementations in `isaacsim.replicator.mobility_gen.examples.robots`:
 
 Override `build()` to use a different controller and `write_action()` to remap the 2D action:
 
-```python
-from isaacsim.replicator.mobility_gen.examples.robots import WheeledMobilityGenRobot
-from isaacsim.replicator.mobility_gen.examples.misc import HawkCamera
-from isaacsim.replicator.mobility_gen.impl.robot import ROBOTS
-from isaacsim.replicator.mobility_gen.impl.utils.global_utils import get_world, join_sdf_paths
-from isaacsim.core.prims import Articulation as _ArticulationView
-from isaacsim.robot.wheeled_robots.robots import WheeledRobot as _WheeledRobot
-from isaacsim.robot.wheeled_robots.controllers.holonomic_controller import HolonomicController
-from isaacsim.robot.wheeled_robots.robots.holonomic_robot_usd_setup import HolonomicRobotUsdSetup
-from isaacsim.storage.native import get_assets_root_path
+`KayaRobot(WheeledMobilityGenRobot)` — overrides `build()` to configure a `HolonomicController` from `HolonomicRobotUsdSetup`, and `write_action()` to map `[lin, ang]` to `[forward, lateral=0, yaw]`.
 
-@ROBOTS.register()
-class KayaRobot(WheeledMobilityGenRobot):
-    physics_dt: float = 0.005
-    z_offset: float = 0.02
-    chase_camera_base_path = "base_link"
-    chase_camera_x_offset: float = -0.5
-    chase_camera_z_offset: float = 0.3
-    chase_camera_tilt_angle: float = 60.0
-    front_camera_base_path = "base_link/front_hawk"
-    front_camera_rotation = (0.0, 0.0, 0.0)
-    front_camera_translation = (0.1, 0.0, 0.05)
-    front_camera_type = HawkCamera
-
-    occupancy_map_radius: float = 0.2
-    occupancy_map_z_min: float = 0.02
-    occupancy_map_z_max: float = 0.3
-    occupancy_map_cell_size: float = 0.05
-    occupancy_map_collision_radius: float = 0.2
-    random_action_linear_velocity_range = (-0.2, 0.4)
-    random_action_angular_velocity_range = (-0.5, 0.5)
-    random_action_linear_acceleration_std: float = 1.0
-    random_action_angular_acceleration_std: float = 2.0
-    random_action_grid_pose_sampler_grid_size: float = 5.0
-    path_following_speed: float = 0.4
-    path_following_angular_gain: float = 1.0
-    path_following_stop_distance_threshold: float = 0.3
-    path_following_forward_angle_threshold = 0.785
-    path_following_target_point_offset_meters: float = 0.5
-    keyboard_linear_velocity_gain: float = 0.4
-    keyboard_angular_velocity_gain: float = 0.5
-    gamepad_linear_velocity_gain: float = 0.4
-    gamepad_angular_velocity_gain: float = 0.5
-
-    wheel_dof_names = ["axle_0_joint", "axle_1_joint", "axle_2_joint"]
-    usd_url: str = get_assets_root_path() + "/Isaac/Robots/NVIDIA/Kaya/kaya.usd"
-    chassis_subpath: str = "base_link"
-    wheel_radius: float = 0.04
-    wheel_base: float = 0.1
-    com_prim_subpath: str = "base_link/control_offset"
-
-    @classmethod
-    def build(cls, prim_path: str):
-        world = get_world()
-        robot = world.scene.add(
-            _WheeledRobot(prim_path, wheel_dof_names=cls.wheel_dof_names, create_robot=True, usd_path=cls.usd_url)
-        )
-        view = _ArticulationView(join_sdf_paths(prim_path, cls.chassis_subpath))
-        world.scene.add(view)
-        kaya_setup = HolonomicRobotUsdSetup(
-            robot_prim_path=prim_path,
-            com_prim_path=join_sdf_paths(prim_path, cls.com_prim_subpath),
-        )
-        (wheel_radius, wheel_positions, wheel_orientations, mecanum_angles, wheel_axis, up_axis) = \
-            kaya_setup.get_holonomic_controller_params()
-        controller = HolonomicController(
-            name="kaya_controller", wheel_radius=wheel_radius, wheel_positions=wheel_positions,
-            wheel_orientations=wheel_orientations, mecanum_angles=mecanum_angles,
-            wheel_axis=wheel_axis, up_axis=up_axis,
-        )
-        camera = cls.build_front_camera(prim_path)
-        return cls(prim_path=prim_path, robot=robot, articulation_view=view, controller=controller, front_camera=camera)
-
-    def write_action(self, step_size: float):
-        action = self.action.get_value()
-        # MobilityGen 2D action [linear_vel, angular_vel] -> holonomic [forward, lateral=0, yaw]
-        self.robot.apply_wheel_actions(self.controller.forward(command=[action[0], 0.0, action[1]]))
-```
+See [`scripts/holonomic_robot_subclass.py`](scripts/holonomic_robot_subclass.py).
 
 ### Policy-based (legged robots)
 
-Subclass `PolicyMobilityGenRobot` and implement `build_policy()`. `write_action()` converts the 2D action `[lin_vel, ang_vel]` into the 3D command `[x, 0, yaw]` automatically.
+Subclass `PolicyMobilityGenRobot` and implement `build_policy()`. `write_action()` converts the 2D action `[lin_vel, ang_vel]` into the 3D command `[x, 0, yaw]` automatically. The policy spec selects the engine-specific robot USD.
+
+Class attributes are the same `occupancy_map_*`, `random_action_*`, and `path_following_*` set as
+the wheeled robot, plus `articulation_path` and `controller_z_offset`.
 
 ```python
-from isaacsim.replicator.mobility_gen.examples.robots import PolicyMobilityGenRobot
-from isaacsim.replicator.mobility_gen.impl.robot import ROBOTS
-from isaacsim.robot.policy.examples.robots import H1FlatTerrainPolicy
-import numpy as np
-
 @ROBOTS.register()
-class MyLegedRobot(PolicyMobilityGenRobot):
+class MyLeggedRobot(PolicyMobilityGenRobot):
     physics_dt: float = 0.005
     z_offset: float = 1.05
-    usd_url = "/path/to/robot.usd"
     articulation_path = "pelvis"
     controller_z_offset: float = 1.05
-    # ... same occupancy_map_*, random_action_*, path_following_* attrs as Wheeled ...
 
     @classmethod
-    def build_policy(cls, prim_path: str):
-        return H1FlatTerrainPolicy(prim_path=prim_path, position=np.array([0.0, 0.0, cls.controller_z_offset]))
+    def build_policy(cls, prim_path: str) -> RobotPolicyRunner:
+        return RobotPolicyRunner(
+            get_h1_spec(),
+            prim_path=prim_path,
+            position=np.array([0.0, 0.0, cls.controller_z_offset]),
+        )
 ```
 
 Reference implementations: `H1Robot` (`articulation_path="pelvis"`) and `SpotRobot` (`articulation_path="/"`) in the same module.
@@ -378,29 +268,9 @@ Reference implementations: `H1Robot` (`articulation_path="pelvis"`) and `SpotRob
 
 `replay_directory.py` calls `load_scenario()` which does `ROBOTS.get(config.robot_type)`. If the robot isn't in the built-in extension, this raises `KeyError`. **You cannot pass `--enable` to load an ad-hoc Python file** — either create a proper Isaac extension, or copy the replay loop into your own script and register the robot class before calling `load_scenario()`:
 
-```python
-from isaacsim import SimulationApp
-simulation_app = SimulationApp(launch_config={"headless": True})
+`replay_with_custom_robot(input_dir, custom_robot_class)` — register a custom robot class at runtime, then call `load_scenario()` for each recording directory.
 
-import glob, os
-import isaacsim.replicator.mobility_gen.examples  # built-in robots
-from isaacsim.replicator.mobility_gen.impl.build import load_scenario
-from isaacsim.replicator.mobility_gen.impl.robot import ROBOTS
-from isaacsim.replicator.mobility_gen.impl.utils.global_utils import get_world
-
-@ROBOTS.register()
-class KayaRobot(WheeledMobilityGenRobot):
-    ...  # full class definition
-
-for recording_path in sorted(glob.glob(os.path.join(INPUT_DIR, "*"))):
-    scenario = load_scenario(recording_path)   # now finds KayaRobot
-    world = get_world()
-    world.reset()
-    scenario.enable_rgb_rendering()
-    # ... rest of render loop (same as replay_directory.py)
-```
-
-See `code/mobility-gen/05_replay_kaya.py` for the complete working example.
+See [`scripts/replay_custom_robot.py`](scripts/replay_custom_robot.py).
 
 ## Config / Data Format
 
@@ -417,8 +287,10 @@ See `code/mobility-gen/05_replay_kaya.py` for the complete working example.
 
 ## Common Pitfalls
 
-- **`ModuleNotFoundError: No module named 'isaacsim.replicator.mobility_gen'`**: Extensions aren't auto-loaded. Pass `--enable isaacsim.replicator.mobility_gen.examples` to `python.sh`. All extension imports must come AFTER `SimulationApp(...)`.
-- **`AttributeError: 'World' object has no attribute 'initialize_simulation_context'`**: Only the async version exists (`initialize_simulation_context_async`). For standalone scripts, call `world.reset()` instead.
+- **`ModuleNotFoundError: No module named 'isaacsim.replicator.experimental.mobility_gen'`**: Extensions aren't auto-loaded. Pass `--enable isaacsim.replicator.mobility_gen.examples` to `python.sh`. All extension imports must come AFTER `SimulationApp(...)`.
+- **`KeyError: 'CarterRobot'` from `ROBOTS.get(...)` despite a clean import**: `ROBOTS` came from a different registry than the one the examples extension populates. Import it from `isaacsim.replicator.experimental.mobility_gen`.
+- **`ImportError: ...impl.utils.global_utils`** or **`get_world` / `new_world` / `join_sdf_paths` undefined**: removed with the legacy `World` flow. Use `RecordingSession` + `SimulationManager`, and `isaacsim.core.experimental.utils.prim.join_prim_paths`.
+- **Recording runs but every episode has 0 steps**: `session.step()` was called without advancing physics. `SimulationManager.initialize_physics()` does not start the Kit timeline, so `simulation_app.update()` alone does not tick physics — call `SimulationManager.step(steps=1)` each iteration.
 - **Replay `KeyError: 'MyRobot'`**: `replay_directory.py` only knows built-in robots. Write a wrapper script that registers your robot class before calling `load_scenario()`.
 - **Custom robot produces no images during replay**: Missing `front_camera_*` attributes, or `build()` passes `front_camera=None`. Add the attributes and call `cls.build_front_camera(prim_path)` in `build()`.
 - **`AttributeError: 'MyRobot' has no attribute 'chase_camera_base_path'`**: `chase_camera_base_path`, `chase_camera_x_offset`, `chase_camera_z_offset`, `chase_camera_tilt_angle` are required by `load_scenario()` even for headless recording.

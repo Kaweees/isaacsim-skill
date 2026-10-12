@@ -15,7 +15,12 @@
 # limitations under the License.
 
 # Isaac Sim Script Validator
-# Usage: validate_sim.sh --level <1|2|3> <script.py> [--output-dir <dir>] [--timeout <seconds>]
+# Usage:
+#   validate_sim.sh --level <1|2> <script.py> [--output-dir <dir>] [--timeout <seconds>]
+#   validate_sim.sh --level 3 --confirm-execute <script.py> [...]
+#
+# Levels 1–2 are static. Level 3 executes the script (not sandboxed) and requires
+# --confirm-execute or CONFIRM_EXECUTE=1.
 
 set -euo pipefail
 
@@ -23,11 +28,14 @@ LEVEL=1
 SCRIPT=""
 OUTPUT_DIR=""
 TIMEOUT=120
+CONFIRM_EXECUTE="${CONFIRM_EXECUTE:-0}"
 ERRORS=0
 WARNINGS=0
 
 usage() {
-    echo "Usage: $0 --level <1|2|3> <script.py> [--output-dir <dir>] [--timeout <seconds>]"
+    echo "Usage: $0 --level <1|2|3> [--confirm-execute] <script.py> [--output-dir <dir>] [--timeout <seconds>]"
+    echo "  Levels 1–2: static checks only."
+    echo "  Level 3: executes <script.py> (not sandboxed). Requires --confirm-execute or CONFIRM_EXECUTE=1."
     exit 1
 }
 
@@ -41,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --level) LEVEL="$2"; shift 2 ;;
         --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
         --timeout) TIMEOUT="$2"; shift 2 ;;
+        --confirm-execute) CONFIRM_EXECUTE=1; shift ;;
         -*) usage ;;
         *) SCRIPT="$1"; shift ;;
     esac
@@ -48,6 +57,21 @@ done
 
 [[ -z "$SCRIPT" ]] && usage
 [[ ! -f "$SCRIPT" ]] && echo "Script not found: $SCRIPT" && exit 1
+
+# Resolve to a canonical path; reject if the path disappears after resolve (symlink tricks).
+SCRIPT_RESOLVED="$(readlink -f "$SCRIPT" 2>/dev/null || realpath "$SCRIPT" 2>/dev/null || echo "")"
+if [[ -z "$SCRIPT_RESOLVED" || ! -f "$SCRIPT_RESOLVED" ]]; then
+    echo "Script path could not be resolved safely: $SCRIPT" >&2
+    exit 1
+fi
+SCRIPT="$SCRIPT_RESOLVED"
+case "$SCRIPT" in
+    *.py) ;;
+    *)
+        echo "Level checks expect a .py script, got: $SCRIPT" >&2
+        exit 1
+        ;;
+esac
 
 echo "🔍 Validating: $SCRIPT (Level $LEVEL)"
 echo ""
@@ -110,10 +134,17 @@ fi
 
 [[ "$LEVEL" -lt 3 ]] && { echo ""; echo "Level 2 complete. Errors: $ERRORS, Warnings: $WARNINGS"; exit $ERRORS; }
 
-# --- Level 3: Runtime ---
+# --- Level 3: Runtime (executes the script; not sandboxed) ---
 echo ""
 echo "📋 Level 3: Runtime Checks"
 
+if [[ "$CONFIRM_EXECUTE" != "1" ]]; then
+    echo "ERROR: Level 3 executes the target script with your user privileges (not sandboxed)." >&2
+    echo "Re-run with --confirm-execute or CONFIRM_EXECUTE=1 after reviewing: $SCRIPT" >&2
+    exit 2
+fi
+
+echo "  ⚠️  WARNING: About to EXECUTE (not sandboxed): $SCRIPT"
 echo "  ⏳ Running script (timeout: ${TIMEOUT}s)..."
 RUNTIME_LOG=$(mktemp)
 if timeout "$TIMEOUT" python3 "$SCRIPT" > "$RUNTIME_LOG" 2>&1; then

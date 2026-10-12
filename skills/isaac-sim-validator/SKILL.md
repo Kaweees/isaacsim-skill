@@ -1,16 +1,58 @@
 ---
 name: isaac-sim-validator
-description: >
-  Validate Isaac Sim simulation scripts and outputs before delivery. Rejects
-  black frames, deprecated `omni.isaac.*` imports, hardcoded user paths/IPs,
-  missing lights, wrong render mode, undersized SimulationApp configs, and bad
-  RL output formats. Use when a sub-agent produces a script, a render, a
-  training artifact, or any USD scene that's about to be handed to the user.
+description: "Pre-delivery QA gate for Isaac Sim scripts (imports, lights, paths, frames). Level 3 executes untrusted Python unsandboxed and needs --confirm-execute. Use before handing off simulation work."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim Validator
 
+**WARNING:** Level 3 executes the target script with your full user privileges. There is no container or sandbox isolation. Only use `--confirm-execute` on scripts you fully trust.
+
+## Purpose
+
+Reject common delivery defects: black frames, deprecated imports, hardcoded user paths, missing lights, wrong render modes, and undersized `SimulationApp` configurations.
+
+Levels 1–2 are **static** checks only. **Level 3 runs the target Python script** under `timeout` with the calling user's privileges. Level 3 requires an explicit `--confirm-execute` (or `CONFIRM_EXECUTE=1`) opt-in; it is not a sandbox.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Levels 1–2 cannot prove runtime correctness for every workload.
+- Level 3 executes untrusted script content only after `--confirm-execute`; there is no container/firejail isolation.
+- Thresholds target common demo/SDG failures, not all product features.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Final gate before delivery. Reject outputs that fail the checks below; do not soften results.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/validate_sim.sh` | Validate sim | positional args per script header (see script) |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/validate_sim.sh", args=[])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Universal checklist (apply to every output)
 
@@ -22,9 +64,9 @@ Final gate before delivery. Reject outputs that fail the checks below; do not so
 | `SimulationApp` config | explicit `width` and `height` | reject: `SimulationApp without window args causes swapchain-capture size mismatch` |
 | Lights present | `DomeLight` (intensity >= 100) **and** `DistantLight` (>= 500) | reject: `No lighting; render will be black` |
 | Render mode | `RayTracedLighting` for iteration; `PathTracing` only for hero shots | reject: `PathTracing too slow for iteration; use RayTracedLighting` |
-| ACES tonemap | `/rtx/post/tonemap/op=4`, `filmIso` 200 default / 600 deep-aisle / 400 aerial | suggest: `Enable ACES (op=4) for contrast` |
+| ACES tonemap | carb `rtx.post.tonemap.op` = 4; `filmIso` 200 default / 600 deep-aisle / 400 aerial | suggest: `Enable ACES (op=4) for contrast` |
 | Final render | >= 150 KB and mean_RGB > 30 | reject: `Render is black or low-energy; check lighting` |
-| User paths | no `/home/<user>/`, `C:\Users\<name>\`, or per-agent home paths | reject: `Hardcoded user path; use $ISAAC_SIM_DIR, $ISAAC_LAB_DIR, $WORKSPACE_DIR, or argparse` |
+| User paths | no `/home/<user>/`, hardcoded `C:\path\to\...`, or per-agent home paths; prefer `%USERPROFILE%`, env vars, or argparse | reject: `Hardcoded user path; use $ISAAC_SIM_DIR, $ISAAC_LAB_DIR, $WORKSPACE_DIR, or argparse` |
 | Network endpoints | no bare IPs (`192.168.x.x`, `10.x.x.x`) or non-localhost hosts | reject: `Hardcoded endpoint; parameterize via env var or config` |
 | Output dir | configurable (env var, CLI, or function param) | reject: `Output dir hardcoded; accept as parameter or read $OUTPUT_DIR` |
 | VRAM headroom | `nvidia-smi` headroom > 20% after settle | warn at >90% utilization; likely leak or scale issue |
@@ -54,6 +96,13 @@ Final gate before delivery. Reject outputs that fail the checks below; do not so
 | Color histogram | multi-modal | single peak | overexposed or flat lighting; adjust intensity |
 | Object visibility | >= 3 robots or 50+ assets | < 10 visible | suggest: `Scene too sparse; add set dressing` |
 | Shadow consistency | consistent shadows | random black blobs | reject: `Shadow artifacts; check light cone bounds` |
+
+## Video validation
+
+For any delivered MP4/GIF, extract and inspect at least start/middle/end frames. Reject
+or recut the presentation copy if the first frames show render warm-up, the subject is
+occluded, or the camera loses the task. Keep the complete source render and metrics
+when a shorter presentation cut is made.
 
 ## RL training validation
 
@@ -128,9 +177,23 @@ Do not hedge ("I think", "maybe"). Do not deliver a black frame.
 ## Input sources
 
 - `isaac-sim-orchestrator`, `isaac-sim-rendering`, other producer skills, and sub-agent outputs.
-- Invoked on: "validate this", "check this render", "review this code".
+- Invoked on Isaac Sim deliverables: "validate this Isaac Sim script", "check this Isaac Sim render", "review this sim output".
+
+## Automated validation
+
+Run the checks above from the CLI with [`scripts/validate_sim.sh`](scripts/validate_sim.sh):
+
+```bash
+# Levels 1–2: static only
+bash scripts/validate_sim.sh --level <1|2> <script.py> [--output-dir <dir>] [--timeout <seconds>]
+
+# Level 3: EXECUTES the script — requires explicit opt-in
+bash scripts/validate_sim.sh --level 3 --confirm-execute <script.py> [--output-dir <dir>] [--timeout <seconds>]
+# or: CONFIRM_EXECUTE=1 bash scripts/validate_sim.sh --level 3 <script.py> ...
+```
 
 ## Feedback loop
 
 - Rejections feed back into the producing skill's failure-mode catalog.
 - Recurring failures become new validator rules.
+- Standing rubric: [`references/quality-criteria.md`](references/quality-criteria.md). Record each iteration in [`references/feedback-log.md`](references/feedback-log.md).

@@ -1,23 +1,55 @@
 ---
 name: isaac-sim-rendering
-description: >
-  Headless rendering with Isaac Sim 6.0+ / Kit 110 — frame capture, lighting setup,
-  ACES tone mapping calibration, look-at camera math, and validation thresholds for
-  batch simulation and synthetic data generation. Covers SimulationApp + Replicator
-  RGB annotator, RT2 (RayTracedLighting) vs PathTracing tradeoffs, multi-layer
-  warehouse lighting recipes, deep-aisle vs overview exposure tension, and frame
-  quality validation.
-  Use when capturing screenshots or video from Isaac Sim, generating synthetic data,
-  building rendering pipelines, or tuning lighting and tonemapping for photoreal
-  warehouse / robot / factory scenes.
-  Triggers on: Isaac Sim rendering, headless render, RT2, RayTracedLighting,
-  PathTracing, ACES tonemap, filmIso, SimulationApp render, replicator annotator,
-  warehouse lighting, look-at camera, frame validation.
+description: "Headless RT2/PathTracing production rendering with ACES tuning. Use when capturing frames or validating render quality."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim Headless Rendering (Kit 110 / Isaac Sim 6.0+)
 
+## Purpose
+
+Capture production-quality headless frames with RT2 or PathTracing, ACES tone mapping, warehouse lighting patterns, and quantitative validation thresholds.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Capture pipeline, lighting recipes, ACES calibration, camera math, validation. Host-agnostic; adapt paths to your environment.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/capture_pipeline.py` | Standard Kit 110 / Isaac Sim 6.0+ headless capture pipeline | see script --help |
+| `scripts/look_at_camera.py` | Look-at camera math for USD cameras (Z-up, USD -Z forward convention) | see script --help |
+| `scripts/warehouse_lighting.py` | Multi-layer warehouse lighting recipes for headless Isaac Sim rendering | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/capture_pipeline.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Read first
 
@@ -27,36 +59,16 @@ Capture pipeline, lighting recipes, ACES calibration, camera math, validation. H
 
 Standard Kit 110 / Isaac Sim 6.0+ capture pipeline. Works headless including on ARM64 / GB10 Spark (the older 5.1.0 black-frame bug is resolved).
 
-```python
-from isaacsim import SimulationApp
-app = SimulationApp({"headless": True, "width": 1920, "height": 1080,
-                     "renderer": "RayTracedLighting"})
+`setup_capture_pipeline(stage_path, width, height, renderer, settle_frames)` — open stage, define camera, attach RGB annotator, settle, return `(app, rgb_annot, render_product)`. `capture_frame(rgb_annot)` — step replicator and return `(H, W, 3)` uint8 RGB array.
 
-import omni.replicator.core as rep
-from pxr import UsdGeom, Gf
+See [`scripts/capture_pipeline.py`](scripts/capture_pipeline.py).
 
-# Camera as a USD prim (NOT isaacsim.sensors.camera.Camera)
-cam = UsdGeom.Camera.Define(stage, "/World/RenderCam")
-cam_xf = UsdGeom.Xformable(cam.GetPrim())
-cam_xf.AddTranslateOp().Set(Gf.Vec3d(x, y, z))
-cam_xf.AddRotateXYZOp().Set(Gf.Vec3f(rx, ry, rz))
-cam.CreateFocalLengthAttr().Set(20.0)
+For live controller demos where simulation remains the time authority, disable Replicator capture-on-play and capture snapshots without pausing the timeline. See [`scripts/capture_pipeline.py`](scripts/capture_pipeline.py) for the executable pattern.
 
-# Render product + RGB annotator
-render_product = rep.create.render_product("/World/RenderCam", (1920, 1080))
-rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
-rgb_annot.attach([render_product])
-
-# Settle: 200 frames for RT2 to converge on most scenes,
-# 500 frames for deeply-occluded indoor aisles.
-for _ in range(200):
-    app.update()
-
-# Per-frame capture
-rep.orchestrator.step()
-data = rgb_annot.get_data()       # (H, W, 4) uint8 RGBA
-rgb = data[:, :, :3]
-```
+Inside a Python-server file that is otherwise synchronous, avoid the sync
+`rep.orchestrator.step()` call in live Kit. Schedule `step_async(...)` and pump
+`app_utils.update_app()` until the task completes; this prevents event-loop
+reentrancy failures while still advancing the render product.
 
 **Capture method choice**:
 - `omni.replicator.core` RGB annotator -> reliable, supports any resolution.
@@ -135,29 +147,9 @@ s.set("/rtx/post/aa/op", 3)                 # TAA for RT2
 
 The biggest single quality improvement came from this lighting + fog recipe.
 
-```python
-# LOW ambient dome — let spots do the work
-dome = UsdLux.DomeLight.Define(stage, "/World/L/Dome")
-dome.CreateIntensityAttr(150.0)               # Low, not 400
-dome.CreateColorAttr(Gf.Vec3f(0.85, 0.88, 0.95))  # Cool blue-ish
+`add_warehouse_lighting(stage, n_lights, settings)` — low-ambient dome + focused rect lights + optional fog. Pass `settings=carb.settings.get_settings()` to enable fog.
 
-# Focused rect lights for POOLS of light (not wide floods)
-for i in range(N):
-    rl = UsdLux.RectLight.Define(stage, f"/World/L/HB{i}")
-    rl.CreateIntensityAttr(12000.0)           # Bright
-    rl.CreateWidthAttr(1.5)                   # Narrow
-    rl.CreateHeightAttr(0.2)
-    rl.CreateEnableColorTemperatureAttr(True)
-    rl.CreateColorTemperatureAttr(4200.0)     # Neutral-warm
-
-# Alternating accent lights (asymmetry = realism)
-# Alternate left/right, warm color, mid-height on racks
-
-# Subtle fog — sells scale
-s.set("/rtx/fog/enabled", True)
-s.set("/rtx/fog/fogDensity", 0.004)
-s.set("/rtx/fog/color", (0.85, 0.87, 0.92))   # Cool gray
-```
+See [`scripts/warehouse_lighting.py`](scripts/warehouse_lighting.py).
 
 For 40m warehouse: fog density 0.003 adds depth without murk.
 
@@ -231,30 +223,9 @@ def validate_frame(rgb_array):
 
 For chase/POV/overview cameras pointing at a target, always use a look-at matrix. Don't hand-tune Euler angles — they're brittle and you'll waste hours on sign flips.
 
-```python
-from pxr import Gf
+`look_at_matrix(eye, target, up)` — returns `Gf.Matrix4d` for a USD camera at `eye` looking at `target`. Handles degenerate up-vector (straight down/up).
 
-def look_at_matrix(eye, target, up=Gf.Vec3d(0, 0, 1)):
-    """Returns Gf.Matrix4d for a USD camera at `eye` looking at `target`.
-    Handles degenerate up-vector (camera looking straight down/up)."""
-    eye = Gf.Vec3d(*eye)
-    target = Gf.Vec3d(*target)
-    fwd = (target - eye).GetNormalized()
-
-    # Degenerate up-vector fallback (top-down or bottom-up)
-    if abs(fwd * up) > 0.99:
-        up = Gf.Vec3d(0, 1, 0)
-
-    right = (fwd ^ up).GetNormalized()       # cross product
-    cam_up = (right ^ fwd).GetNormalized()
-
-    m = Gf.Matrix4d()
-    m[0] = [right[0], right[1], right[2], 0]
-    m[1] = [cam_up[0], cam_up[1], cam_up[2], 0]
-    m[2] = [-fwd[0], -fwd[1], -fwd[2], 0]    # USD camera: -Z is forward
-    m[3] = [eye[0], eye[1], eye[2], 1]
-    return m
-```
+See [`scripts/look_at_camera.py`](scripts/look_at_camera.py).
 
 ### Third-Person Camera Offsets (Z-up, robot facing +X at yaw=0)
 
@@ -327,7 +298,7 @@ For batch/iterative rendering, keep the Kit app running and switch stages in-pla
 
 - Cold start = 5-7 min wasted
 - Persistent session = 10-15s per render
-- Use `omni.usd.get_context().open_stage(path)` to switch scenes
+- Use `stage_utils.open_stage(path)` (`isaacsim.core.experimental.utils.stage`) to switch scenes
 - Only restart Kit if it crashes or hits OOM
 
 Implementation is up to you (REPL, command file, IPC, etc.) — the principle is "don't pay the cold-start cost more than once."

@@ -1,18 +1,53 @@
 ---
 name: spatial-reasoning
-description: >
-  3D spatial reasoning for USD scene composition. Coordinate math,
-  metersPerUnit conversion, bounding-box analysis, placement transforms
-  (T*R*S ordering), look-at, collision-free grid layouts, zone boundaries,
-  quaternion rotation, spatial indexing (R-tree/grid), SAT/GJK,
-  A* + smoothing, Dubins, 2D bin packing, frustum culling, coordinate
-  system conversions (USD/Unity/Unreal), warehouse standards (OSHA/NFPA/RMI),
-  ABC analysis, numerical stability.
+description: "USD spatial math: transforms, bbox, layouts, and planning helpers. Use when placing, scaling, or arranging scene assets."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # 3D Spatial Reasoning
 
+## Purpose
+
+Apply coordinate math, bounding-box analysis, collision-free layouts, look-at placement, and lightweight path/grid helpers when composing USD scenes.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Core spatial math for placing objects correctly in OpenUSD scenes.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/spatial.py` | Spatial | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/spatial.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Coordinate System
 
@@ -167,6 +202,7 @@ size = bbox.GetMax() - bbox.GetMin()
 ## Common Gotchas
 
 0a. **Shell interior bounds ≠ shell bbox** — `sm_warehouse_mega` bbox is (-13.2,-5.2)→(172.6,136.8) but Corner module starts at X=0.6 and Center (floor) at X=11.6. Actual usable interior: X=3-170, Y=0-134. Always check module children bboxes, not just root. 0b. **UsdGeom.Cube extent is [-1,1]³ (size 2)** — scale by `w/2, d/2, h/2` NOT `w, d, h`. Using full dimensions makes every block 2× its intended size. This caused 14,570 phantom clashes in uber warehouse v2. 0b. **`SetTranslateOnly()` WIPES scale from Gf.Matrix4d** — if you set `mat[0][0]=0.01` then call `mat.SetTranslateOnly(...)`, the scale reverts to identity. Build the matrix with explicit 16 floats: `Gf.Matrix4d(sx,0,0,0, 0,sy,0,0, 0,0,sz,0, tx,ty,tz,1)`. This caused a 100× shell scaling bug.
+0c. **World delta != child local delta** — to move a child by a world vector while keeping its authored local rotation/scale, map the vector through the parent's inverse rotation/scale, then write only the translation row. Adding a world delta straight to the local translation applies the parent's rotation/scale to it (wrong motion whenever the parent isn't identity/translation-only).
 1. `Sdf.Layer.FindOrOpen` fails on binary `.usd` crate files — use `Usd.Stage.Open`
 2. Matrix order: `T * R * S` not `S * R * T`
 3. Cameras default look along -Z in camera space = straight down in Z-up stage (no rotation needed for top-down)

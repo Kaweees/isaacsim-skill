@@ -1,20 +1,35 @@
 ---
 name: isaac-sim-robot-navigation
-description: >
-  Runtime robot navigation in NVIDIA Isaac Sim — driving a robot through a scene live in
-  a custom script. Covers RL policy loading (PolicyController), trajectory following,
-  physics-vs-baked-vs-per-frame approaches for heavy stages, GPU OOM avoidance on
-  98K-prim scenes, Kit 110-specific timeline/physics gotchas, and standard Spot route
-  catalog. For occupancy maps, A*, kinematics, and camera math, see `navigation-primitives`.
-  For sensor-recording SDG, see `mobility-gen`.
-  Use when navigating a robot live in your own Isaac Sim script, choosing between physics
-  simulation and pre-baked transforms for heavy stages, debugging GPU OOM on large scenes,
-  or troubleshooting Kit 110 physics hangs after kill+relaunch.
-  Triggers on: PolicyController, RL policy load, trajectory follow, baked vs physics,
-  per-frame transform, GPU OOM navigation, Kit 110 timeline.play, robot navigation runtime.
+description: "Runtime mobile-robot navigation in custom scripts (RL, baked, per-frame). Use when driving robots live in simulation."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim Robot Navigation — Runtime
+
+## Purpose
+
+Drive mobile robots at runtime with RL policies, trajectory followers, and physics/baked/per-frame stage strategies while avoiding common Kit 110 pitfalls.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 Runtime navigation specialization. Driving a robot through a USD scene live, in your own Isaac Sim script.
 
@@ -36,7 +51,7 @@ Runtime navigation specialization. Driving a robot through a USD scene live, in 
 
 | Capability | API |
 |---|---|
-| RL policy execution | `isaacsim.robot.policy.examples.controllers.PolicyController` |
+| RL policy execution | `isaacsim.robot.policy.examples.RobotPolicyRunner` + root `get_*_spec` factory |
 | Robot articulation | `isaacsim.core.experimental.prims.Articulation` |
 | Physics lifecycle | `isaacsim.core.simulation_manager.SimulationManager` |
 
@@ -46,9 +61,8 @@ For shared primitives (omap, A*, kinematics, look-at), see `navigation-primitive
 
 ### Timeline MUST be playing for Physics simulation
 ```python
-import omni.timeline
-timeline = omni.timeline.get_timeline_interface()
-timeline.play()  # WITHOUT THIS, PHYSICS NEVER STEPS
+import isaacsim.core.experimental.utils.app as app_utils
+app_utils.play(commit=True)  # WITHOUT THIS, PHYSICS NEVER STEPS
 ```
 
 ### Strip non-robot physics from heavy stages

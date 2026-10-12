@@ -1,19 +1,35 @@
 ---
 name: isaac-sim-orchestrator
-description: >
-  Top-level dispatcher: turns a natural-language Isaac Sim request into a runnable
-  simulation. Owns the env-var contract (`$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`,
-  `$WORKSPACE_DIR`, `$CIP_ROOT`), decomposes the task into capabilities, routes
-  to specialist skills (`usd-pipeline`, `isaac-sim-rendering`,
-  `isaac-sim-validator`, `physics-simulation`, `usd-composition-architecture`),
-  and validates output before delivery.
-  Use when (1) creating a sim scene with robots, objects, environments,
-  (2) controlling robots in Isaac Sim, (3) generating renders or camera captures,
-  (4) collecting Physical AI training data, (5) running headless sims on GPU,
-  (6) orchestrating multi-robot fleets in warehouses.
+description: "Execute end-to-end Isaac Sim work through ordered specialist skills and validation. Use when an established goal requires multi-skill scene, robot, render, sensor, or SDG integration."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim Orchestrator
+
+## Purpose
+
+Turn an established goal or demo contract into a runnable simulation by mapping capabilities, executing specialist skills in order, and validating output before delivery. Use `isaac-sim-workflow` first when the deliverable and acceptance criteria still need to be scoped.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 ## Environment contract
 
@@ -28,6 +44,14 @@ Every routed skill assumes these variables; set them in the agent config or shel
 
 Run `nvidia-smi` at session start to size `num_envs` and pick RT2 vs PathTracing. Do not hardcode GPU class.
 
+## Execution mode
+
+Prefer live iteration: when a sim is running, push code over the Python server via
+`isaac-sim-remote` (port 8226). Write a standalone script only for handoff/repro;
+avoid `python.sh` except to test that script.
+
+Launch a server-enabled sim using the launch procedure in `isaac-sim-remote`; do not duplicate its command here.
+
 ## Task decomposition
 
 For any request, run all three phases. The specific steps inside each phase depend on the goal; identify capabilities first, then verify each in isolation before combining.
@@ -35,6 +59,7 @@ For any request, run all three phases. The specific steps inside each phase depe
 ### Phase 1 — Verify foundations
 
 **1a. Feature/skill mapping** (before any code):
+- If the request is a demo, load `isaac-sim-workflow` first: it defines the deliverable type, acceptance criteria, validation needs, and routes back through these phases with that context.
 - Cross-check the request against documented Isaac Sim features and APIs.
 - For each capability, look up an existing skill:
   - Skill exists -> load it, follow its procedure.
@@ -67,11 +92,17 @@ Combine verified foundations one at a time. Re-run stability/correctness checks 
 
 | Skill | Use for |
 |---|---|
+| `isaac-sim-remote` | Live Python-server iteration against a running sim (preferred over standalone during dev) |
+| `urdf-mjcf-to-usd-conversion` | Import URDF/MJCF robot descriptions to USD with physics APIs and articulation structure |
 | `usd-pipeline` | Asset insertion, scaling, materials, headless render compatibility |
 | `usd-composition-architecture` | Layered USD assets (root + physics + appearance) |
-| `isaac-sim-rendering` | Headless Kit 110 capture, RT2/PathTracing, ACES |
+| `usd-articulation` | Multi-link articulations, joint hierarchies, Robot Schema overlay |
 | `physics-simulation` | PhysicsScene config, per-prim setup, contact materials, Newton vs PhysX |
+| `isaac-sim-sensor` | RTX/physics sensors (camera, LiDAR, IMU, contact), render products, annotators |
+| `isaac-sim-rendering` | Headless Kit 110 capture, RT2/PathTracing, ACES |
 | `isaac-sim-validator` | Final QA gate before delivery |
+
+For the modern Kit 110 public API surface (bootstrap, stage/app utilities, common calls) used across these skills, see [`references/api-cheatsheet.md`](references/api-cheatsheet.md).
 
 ## Multi-robot fleet reference
 
@@ -213,10 +244,88 @@ Capture: every 4th step (15 fps)
 2. Compose scene: load warehouse USD, position robots via `place_robots_grid`.
 3. Create collision groups if needed.
 4. Use `usd-pipeline` to validate mesh scale and shaders.
-5. Launch `isaac-sim.sh --exec script.py` in a persistent session.
+5. Run in a persistent session: iterate live via `isaac-sim-remote` (Python server), or `isaac-sim.sh --exec script.py` for a standalone/handoff run.
 6. Use a render-pulse loop every 100 steps.
 7. Validate the render via `isaac-sim-validator`.
 8. Deliver video and final scene.
+
+## Workflow: Physical AI end-to-end pipeline
+
+Route chain for tasks that span asset import, physics, sensors, and validation (e.g. "import a Franka arm, simulate grasping, capture LiDAR + RGB, validate").
+
+### Pipeline stages
+
+```
+┌─────────────────────────┐     ┌──────────────────────┐     ┌───────────────────┐     ┌─────────────────────┐
+│ 1. Asset Import         │────▶│ 2. Physics Setup     │────▶│ 3. Sensor Attach  │────▶│ 4. Validate & Ship  │
+│                         │     │                      │     │                   │     │                     │
+│ urdf-mjcf-to-usd-conv  │     │ physics-simulation   │     │ isaac-sim-sensor  │     │ isaac-sim-validator │
+│ usd-pipeline            │     │ usd-articulation     │     │ isaac-camera      │     │ isaac-sim-rendering │
+│ usd-composition-arch    │     │                      │     │ isaac-sim-remote  │     │                     │
+└─────────────────────────┘     └──────────────────────┘     └───────────────────┘     └─────────────────────┘
+```
+
+### Stage 1 — Asset import
+
+| Input | Skill | Output contract |
+|---|---|---|
+| URDF/MJCF file | `urdf-mjcf-to-usd-conversion` | USD with `IsaacRobotAPI`, `IsaacLinkAPI`, `IsaacJointAPI`, collision meshes |
+| USD environment assets | `usd-pipeline` | Measured, shader-classified, placed assets with bbox offsets |
+| Multi-layer composition | `usd-composition-architecture` | Root + physics + appearance layers |
+
+Handoff to Stage 2: USD file(s) on disk, prim paths known, `make_instanceable: true` for RL workloads.
+
+### Stage 2 — Physics setup
+
+| Input | Skill | Output contract |
+|---|---|---|
+| Imported USD stage | `physics-simulation` | `PhysicsScene` (gravity, solver, timestep, CCD), per-prim `RigidBodyAPI`/`CollisionAPI`/`MassAPI`, contact materials, joint drives |
+| Multi-DOF robot | `usd-articulation` | Articulation root, joint hierarchy, drive stiffness/damping |
+
+Prerequisites from Stage 1:
+- Robot USD must have `IsaacRobotAPI` on root (applied by importer).
+- Static environment prims need `CollisionAPI` only (no `RigidBodyAPI`).
+- PhysicsScene is always created here even if the importer applied per-joint attrs.
+
+Handoff to Stage 3: Sim plays without crashes, robot holds pose under gravity for 200 frames.
+
+### Stage 3 — Sensor attachment
+
+| Input | Skill | Output contract |
+|---|---|---|
+| Stable sim stage | `isaac-sim-sensor` | Sensor prims parented to robot links, render products with annotators |
+| Camera intrinsics | `isaac-camera` | Configured USD cameras with lens model and focal params |
+| Runtime verification | `isaac-sim-remote` | Push sensor config live, verify data stream non-zero |
+
+Mount-point convention: sensors attach to Xform prims under robot links. If the imported URDF lacks a mount link, create one:
+```python
+mount = UsdGeom.Xform.Define(stage, f"{robot_path}/{link_name}/sensor_mount")
+```
+
+Handoff to Stage 4: At least one frame of non-zero sensor data (depth > 0, point cloud non-empty, IMU reports gravity).
+
+### Stage 4 — Validate and deliver
+
+| Input | Skill | Checks |
+|---|---|---|
+| Complete sim script | `isaac-sim-validator` | No deprecated imports, no hardcoded paths, lights present, render not black |
+| Rendered frames | `isaac-sim-rendering` | Frame quality, ACES tonemap, resolution |
+| Runtime behavior | (manual or scripted) | Physics: robot stays grounded, no NaN. Sensors: data stream matches expected range |
+
+The validator gates delivery but does not cover runtime physics/sensor correctness. For runtime checks, verify:
+1. `RigidBodyAPI.GetVelocityAttr()` stays finite across the sim window.
+2. Sensor annotator data shape matches configured resolution/channels.
+3. Articulation joint positions stay within drive limits.
+
+### End-to-end procedure
+
+1. **Phase 1a** — Map request features to the pipeline stages above.
+2. **Phase 1b** — Verify each stage in isolation:
+   - Import: USD loads without errors, prim count reasonable for VRAM.
+   - Physics: Robot holds pose, `timeline.play()` + 200 frames stable.
+   - Sensors: One sensor produces valid data on a simplified scene.
+3. **Phase 2** — Integrate incrementally (import → physics → sensors), re-checking stability after each addition.
+4. **Phase 3** — Run `isaac-sim-validator`, capture final output, deliver.
 
 ## Debug protocol
 

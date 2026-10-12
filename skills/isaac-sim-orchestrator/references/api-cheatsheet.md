@@ -57,7 +57,6 @@ mat.set_input_values("diffuseColor", [1.0, 0.0, 0.0])
 ```python
 from isaacsim.core.experimental.prims import Articulation, XformPrim
 from isaacsim.storage.native           import get_assets_root_path
-import omni.timeline
 
 assets = get_assets_root_path()
 stage_utils.add_reference_to_stage(
@@ -69,7 +68,7 @@ stage_utils.add_reference_to_stage(
 XformPrim("/World/Franka").set_world_poses(positions=[[0, 0, 0]])
 
 arm = Articulation("/World/Franka")
-omni.timeline.get_timeline_interface().play()
+app_utils.play(commit=True)
 app_utils.update_app(steps=5)            # init tensors
 
 arm.set_dof_position_targets(targets)
@@ -158,8 +157,8 @@ app_utils.play(commit=True)
 rgb = sensor.get_data("rgb")
 ```
 
-Plain USD camera + Replicator render product still works; see
-`isaac-camera`.
+`RtxCamera` + `CameraSensor` is the only documented camera-authoring path; see
+`isaac-camera` for the full surface (intrinsics, AOVs, lens distortion).
 
 ## RTX lidar / radar / acoustic + physics sensors
 
@@ -184,11 +183,8 @@ Legacy `isaacsim.sensors.physics.*` (`ContactSensor(prim_path=...)`,
 ## Simulation loop
 
 ```python
-import omni.timeline
-
 SimulationManager.set_physics_dt(1.0 / 60.0)
-omni.timeline.get_timeline_interface().play()
-omni.timeline.get_timeline_interface().commit()
+app_utils.play(commit=True)
 
 for step in range(num_steps):
     app_utils.update_app(steps=1)

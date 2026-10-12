@@ -1,0 +1,9 @@
+#usda 1.0
+
+over "Asset" {
+    over "Mesh" (
+        prepend apiSchemas = ["PhysicsMassAPI"]
+    ) {
+        float physics:mass = 10.0
+    }
+}

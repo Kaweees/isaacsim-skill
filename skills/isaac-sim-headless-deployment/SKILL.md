@@ -1,23 +1,57 @@
 ---
 name: isaac-sim-headless-deployment
-description: >
-  Running Isaac Sim 6.0 headlessly with `--no-window` for batch simulation,
-  automated data generation, and server-side workloads. Covers launch modes
-  (native headless, physics-only, standalone Python), key CLI flags, app
-  configurations, and the canonical `SimulationApp` bootstrap pattern.
-  Use when: launching Isaac Sim without a display, running batch simulations
-  on a server, generating synthetic data headlessly, or wrapping a standalone
-  Python script in the headless `SimulationApp` lifecycle.
-  Triggers on: headless Isaac Sim, --no-window, batch simulation,
-  SimulationApp, physics-only, standalone Python script.
+description: "Run a built Isaac Sim 6 headless with --no-window and the renderer disabled. Use for batch SDG jobs, physics-only CI, or unattended server runs."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim Headless Usage (`--no-window`)
+
+## Purpose
+
+Launch Isaac Sim without a window for batch simulation, automated data generation, and server workloads using supported CLI flags and `SimulationApp` patterns.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 This skill covers headless usage of a built or installed Isaac Sim. It does
 not cover Docker images, container orchestration, or CI/CD wiring — those
 live with the deployment infrastructure that wraps Isaac Sim, not in this
 skill.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/batch_simulation.py` | Headless batch simulation loop for Isaac Sim (Kit 110) | see script --help |
+| `scripts/ci_physics_nightly.sh` | CI physics-only nightly runner via python.sh or Kit CLI | `<test_script.py> [args...]` |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/batch_simulation.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Launch modes
 
@@ -63,8 +97,16 @@ does not need a `--no-window` flag.
 
 ### 5. Kit CLI with Script Execution
 
-<!-- CODE: scripts/kit_cli_with_script_execution.sh -->
-*[Code: `scripts/kit_cli_with_script_execution.sh`]*
+```bash
+# Default — full Isaac Sim experience with rendering enabled
+./kit/kit apps/isaacsim.exp.full.kit --exec "my_script.py"
+
+# Headless physics-only batch
+./kit/kit apps/isaacsim.exp.full.kit \
+    --no-window \
+    --/app/renderer/enabled=false \
+    --exec "physics_batch.py"
+```
 
 ## Key CLI Flags
 
@@ -79,7 +121,6 @@ does not need a `--no-window` flag.
 | `--ext-folder PATH` | Add extension search path |
 | `--exec SCRIPT` | Execute script on startup |
 | `--no-ros-env` | Skip ROS 2 auto-sourcing |
-| `--allow-root` | Allow running as root |
 
 ## App Configurations
 
@@ -90,7 +131,42 @@ does not need a `--no-window` flag.
 | `isaacsim.exp.full.fabric.kit` | Fabric scene delegate |
 | `isaacsim.exp.base.kit` | Minimal base (faster startup) |
 | `isaacsim.exp.base.python.kit` | Python-only base |
+| `isaacsim.exp.base.python.physics.headless.kit` | Physics-only headless (CI nightly) |
 | `isaacsim.exp.base.zero_delay.kit` | Zero-delay base |
+
+## CI Physics-Only Nightly Runs
+
+For physics-only nightly CI (no rendering, no window), use the dedicated kit file:
+
+```bash
+# Kit CLI mode — self-contained headless physics config
+./kit/kit apps/isaacsim.exp.base.python.physics.headless.kit \
+    --no-window \
+    --/app/renderer/enabled=false \
+    --exec "test_physics_batch.py"
+```
+
+For standalone Python scripts that bootstrap `SimulationApp` themselves, use
+`python.sh` with renderer-disable flags:
+
+```bash
+# python.sh mode — flags passed through to Carbonite/Kit settings
+./python.sh test_physics_batch.py \
+    --/renderer/enabled=false \
+    --/app/window/enabled=false \
+    --/app/livestream/enabled=false
+```
+
+The kit file (`isaacsim.exp.base.python.physics.headless.kit`) bakes in:
+- `renderer.enabled = false` — no GPU rendering subsystem
+- `app.window.enabled = false` — no window creation
+- `app.livestream.enabled = false` — no streaming
+- All UI/viewport/manipulator extensions disabled
+- All rendering extensions disabled (`omni.hydra.rtx`, `omni.rtx.*`, `omni.syntheticdata`, `omni.replicator.core`)
+- Physics-optimal loop settings (`rateLimitEnabled = false`, `manualModeEnabled = true`, `useFixedTimeStepping = true`)
+
+The wrapper script `scripts/ci_physics_nightly.sh` encapsulates both modes.
+Set `CI_KIT_MODE=1` for Kit CLI, or leave unset for `python.sh` (default).
 
 ## Batch Simulation Pattern
 
@@ -107,28 +183,9 @@ For an N-episode batch driver, wrap that bootstrap in a Python `for episode in r
 
 Skeleton (paraphrased from `load_stage.py`, adapted for batch):
 
-```python
-from isaacsim import SimulationApp
+`run_batch_simulation(scene_path, num_episodes, steps_per_episode, dt, device)` — headless SimulationApp loop that opens a USD, waits for load, sets up physics, steps, and stops each episode.
 
-simulation_app = SimulationApp({"headless": True, "renderer": "RayTracedLighting"})
-
-import isaacsim.core.experimental.utils.app as app_utils
-import isaacsim.core.experimental.utils.stage as stage_utils
-from isaacsim.core.simulation_manager import SimulationManager
-
-NUM_EPISODES, STEPS_PER_EPISODE = 100, 1000
-for episode in range(NUM_EPISODES):
-    stage_utils.open_stage("/path/to/scene.usd")
-    while stage_utils.is_stage_loading():
-        simulation_app.update()
-    SimulationManager.setup_simulation(dt=1.0 / 60.0, device="cpu")
-    app_utils.play()
-    for _ in range(STEPS_PER_EPISODE):
-        simulation_app.update()
-    app_utils.stop()
-
-simulation_app.close()
-```
+See [`scripts/batch_simulation.py`](scripts/batch_simulation.py).
 
 Avoid the legacy `isaacsim.core.api.World` / `isaacsim.core.utils.stage` paths — they are deprecated in Kit 110.
 

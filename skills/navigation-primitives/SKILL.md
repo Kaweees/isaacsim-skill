@@ -1,22 +1,36 @@
 ---
 name: navigation-primitives
-description: >
-  Shared substrate for mobile robot navigation in Isaac Sim. Covers the primitives both
-  runtime navigation (isaac-sim-robot-navigation) and synthetic data generation (mobility-gen)
-  build on top of: OccupancyMap from USD or ROS YAML, A* path planning + smoothing,
-  collision-derived robot footprint / Z-offset / inscribed-and-circumscribed radii,
-  oriented-footprint PhysX overlap_box validation, differential and holonomic wheel
-  kinematics, look-at chase camera math, and standard navigation gotchas.
-  Use when implementing any mobile-robot navigation in Isaac Sim, computing an occupancy
-  map from a USD stage, planning paths over a grid, sizing buffers for robot footprints,
-  setting up chase cameras, or as the foundation BEFORE choosing between runtime navigation
-  and SDG pipelines.
-  Triggers on: occupancy map, A* path planning, OccupancyMap, generate_paths, differential
-  drive, holonomic, mecanum, robot footprint, chase camera, navigation buffer,
-  overlap_box, oriented footprint, inscribed radius.
+description: "Shared mobile-robot substrate: footprints, A*, kinematics, cameras. Use before navigation/MobilityGen; not for map.yaml export (use occupancy-map)."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Navigation Primitives — Shared Substrate
+
+## Purpose
+
+Shared mobile-robot substrate: occupancy maps, A* planning, robot footprints, differential/holonomic kinematics, and chase-camera math.
+
+## Prerequisites
+
+- Built Isaac Sim with `isaacsim.core.experimental`, `wheeled_robots` controllers, and `SimulationManager`.
+- A loaded robot articulation for footprint derivation; `numpy`, `scipy`, `cv2` for planning/collision helpers.
+- A `map.yaml`/`map.png` pair from `occupancy-map` when using pre-baked grids (optional for runtime projection).
+
+## Limitations
+
+- This is the shared substrate only — it does not drive robots, record SDG, or publish ROS topics; jump to the specialization skills for those.
+- Footprints/kinematics assume authored collider geometry and correct scene units; garbage colliders yield garbage footprints.
+- Oriented-footprint PhysX checks require `SimulationManager.initialize()`; the grid-based check works offline but is coarser.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Robot falls through floor / feet float | Spawned without `z_offset` | Spawn at `z = ground + compute_robot_footprint(...)["z_offset"]` |
+| Path clips walls in render but not omap | Skipped oriented-footprint validation | Run `footprint_clips_grid` per waypoint (Validation Pipeline steps 6-7) |
+| Grid full of shell/signage obstacles | Visual-bbox projection without filtering | Prefer collider-driven filtering; apply the geometric filter list |
 
 Foundation layer for mobile robot navigation. Consumed by:
 
@@ -25,6 +39,23 @@ Foundation layer for mobile robot navigation. Consumed by:
 - `occupancy-map`: produces the `map.yaml` consumed here.
 
 Read this first for any mobile-robot work, then jump to the specialization.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/occupancy_map_from_usd.py` | Rasterize a 2D occupancy grid directly from USD geometry (no PhysX required) | see script --help |
+| `scripts/robot_footprint.py` | Compute robot footprint dimensions and Z-offset from USD collision geometry | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/occupancy_map_from_usd.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Shared NVIDIA APIs
 
@@ -44,41 +75,9 @@ Read this first for any mobile-robot work, then jump to the specialization.
 
 Do not hardcode footprints. Walk the articulation's collider prims and union their world-space AABBs. This handles every robot (Spot, Carter, VSVXL, Jetbot, Kaya, H1, custom) and stays correct when assets change.
 
-```python
-import isaacsim.core.experimental.utils.bounds as bounds_utils
-from pxr import Usd, UsdPhysics
-import numpy as np
+`compute_robot_footprint(stage, robot_root)` — walk CollisionAPI prims, union their AABBs, return size, z_offset, inscribed_radius, circumscribed_radius.
 
-def compute_robot_footprint(stage: Usd.Stage, robot_root: str) -> dict:
-    """Return footprint dims + Z-offset + inscribed/circumscribed radii.
-
-    Uses prims tagged with UsdPhysics.CollisionAPI under `robot_root`. Falls back
-    to UsdGeom.Imageable if no colliders are authored.
-    """
-    collider_paths = []
-    for prim in Usd.PrimRange(stage.GetPrimAtPath(robot_root)):
-        if prim.HasAPI(UsdPhysics.CollisionAPI):
-            collider_paths.append(prim.GetPath())
-    if not collider_paths:
-        collider_paths = [stage.GetPrimAtPath(robot_root).GetPath()]
-
-    aabb = bounds_utils.compute_combined_aabb(collider_paths)  # [xmin,ymin,zmin, xmax,ymax,zmax]
-    mn, mx = aabb[:3], aabb[3:]
-    size = mx - mn
-
-    origin_z = stage.GetPrimAtPath(robot_root).GetAttribute("xformOp:translate").Get()[2]
-    z_offset = max(0.0, origin_z - mn[2])  # how far origin sits above lowest collider
-
-    half_w, half_d = size[0] / 2.0, size[1] / 2.0
-    return {
-        "size": tuple(size),                       # full footprint extents (m)
-        "z_offset": float(z_offset),               # origin → lowest collider (m)
-        "inscribed_radius":  float(min(half_w, half_d)),  # safe for ANY yaw
-        "circumscribed_radius": float(np.hypot(half_w, half_d)),  # worst-case yaw
-        "aabb_min": tuple(mn),
-        "aabb_max": tuple(mx),
-    }
-```
+See [`scripts/robot_footprint.py`](scripts/robot_footprint.py).
 
 Use `inscribed_radius` when the robot can rotate freely in place (over-conservative, zero clip). Use `circumscribed_radius` only when you require zero false negatives. For non-circular robots (Spot, VSVXL), prefer the oriented-footprint check below over a single radius.
 
@@ -102,35 +101,9 @@ If your `compute_robot_footprint` output is far from these, your collider author
 
 Use when you need a runtime omap and don't already have a `map.yaml`. For the canonical `map.yaml` workflow consumed by MobilityGen, use `occupancy-map` instead.
 
-```python
-from pxr import Usd, UsdGeom, Gf
-import numpy as np
+`occupancy_map_from_usd(stage, x_range, y_range, resolution, z_cutoff, colliders_only)` — rasterize USD geometry into a 2D uint8 grid (0=free, 255=occupied).
 
-stage = Usd.Stage.Open(stage_path)
-bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
-
-RESOLUTION = 0.25  # meters per cell
-X_RANGE = (-15, 175)
-Y_RANGE = (-25, 155)
-Z_CUTOFF = 4.5  # ignore obstacles above this height
-# Robot dims come from compute_robot_footprint(stage, "/World/Robot"); see above.
-
-grid_w = int((X_RANGE[1] - X_RANGE[0]) / RESOLUTION)
-grid_h = int((Y_RANGE[1] - Y_RANGE[0]) / RESOLUTION)
-grid = np.zeros((grid_h, grid_w), dtype=np.uint8)  # 0=free, 255=occupied
-
-for prim in Usd.PrimRange(stage.GetPrimAtPath("/World")):
-    bb = bbox_cache.ComputeWorldBound(prim)
-    r = bb.ComputeAlignedRange()
-    if r.IsEmpty(): continue
-    mn, mx = r.GetMin(), r.GetMax()
-    if mn[2] > Z_CUTOFF: continue
-    x0 = max(0, int((mn[0] - X_RANGE[0]) / RESOLUTION))
-    x1 = min(grid_w, int((mx[0] - X_RANGE[0]) / RESOLUTION))
-    y0 = max(0, int((mn[1] - Y_RANGE[0]) / RESOLUTION))
-    y1 = min(grid_h, int((mx[1] - Y_RANGE[0]) / RESOLUTION))
-    grid[y0:y1, x0:x1] = 255
-```
+See [`scripts/occupancy_map_from_usd.py`](scripts/occupancy_map_from_usd.py).
 
 ### Obstacle Filtering (CRITICAL — learned 2026-03-13)
 
@@ -256,7 +229,22 @@ def footprint_clips_grid(px: int, py: int, yaw: float, fp: dict, grid: np.ndarra
 
 Skipping steps 6–7 produces paths that look fine on the omap but clip walls in render — especially on rectangular robots (Spot, VSVXL) cornering through aisles.
 
+## Kinematics Helpers
+
+[`scripts/kinematics.py`](scripts/kinematics.py) — standalone differential-drive and holonomic kinematics with pure-pursuit path following. No Isaac Sim dependency; works offline for planning or inside a simulation loop.
+
+Key exports:
+- `differential_forward(v, ω, params)` → `(vL, vR)` wheel rad/s
+- `differential_inverse(vL, vR, params)` → `(v, ω)` body twist
+- `holonomic_forward(vx, vy, ω, params)` → 3 wheel velocities (120°-spaced)
+- `holonomic_inverse(wheel_vels, params)` → `(vx, vy, ω)`
+- `pure_pursuit_step(pos, yaw, path, config)` — PD-steered differential path follower
+- `holonomic_path_step(pos, yaw, path, config)` — strafing holonomic path follower
+
 ## Differential Drive Kinematics
+
+For `motion_generation` controller composition, see `motion-generation`; this
+section owns the geometry, wheel kinematics, and navigation tuning.
 
 ```python
 # Wheel velocities from body twist
@@ -301,6 +289,14 @@ for i in left_wheel_indices:  vel_targets[0, i] = wheel_vels[0]
 for i in right_wheel_indices: vel_targets[0, i] = wheel_vels[1]
 robot.set_dof_velocity_targets(vel_targets)
 ```
+
+## Ackermann / Bicycle Kinematics
+
+For RC-car/forklift-style steering, plan with a curvature limit and smooth both speed and steering-rate. Derive steering from wheel base and curvature, then derive yaw rate from speed and the resulting steering angle; keep the controller-specific implementation with the robot integration rather than embedding a partial snippet here.
+
+Use a larger lookahead or Dubins-style path when the course has tight turns. For
+`motion_generation` controller composition, see `motion-generation`; this skill
+owns the wheel geometry, footprint, and clearance validation.
 
 ## World Transform Extraction
 

@@ -1,17 +1,46 @@
 ---
 name: isaac-sim-ros2-bridge
-description: >
-  Setting up and using the ROS 2 Bridge in Isaac Sim 6.0 (Kit 110) for publishing
-  and subscribing to ROS 2 topics from simulation. Covers bridge architecture, OmniGraph
-  node setup for sensors/commands, Nav2 integration, and multi-robot namespacing.
-  Use when: connecting Isaac Sim to ROS 2, publishing sensor data (camera, LiDAR, odometry)
-  from simulation to ROS 2, subscribing to robot commands from Nav2 or other ROS 2 nodes,
-  or setting up multi-robot namespaced ROS 2 communication in simulation.
-  Triggers on: ROS 2 bridge, OmniGraph ROS2, Nav2 Isaac Sim, isaacsim.ros2.bridge,
-  ROS2PublishLaserScan, cmd_vel subscribe, multi-robot namespace ROS2.
+description: "ROS 2 OmniGraph bridge, Nav2, and multi-robot namespacing in Isaac Sim 6. Use for ROS 2 integration and fleet topics."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Isaac Sim ROS 2 Bridge
+
+## Purpose
+
+Publish and subscribe to ROS 2 topics from Isaac Sim using OmniGraph bridge nodes, including Nav2 integration and multi-robot namespacing.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| No ROS topics | Bridge graph not playing or wrong domain | Press Play; set `ROS_DOMAIN_ID` consistently |
+| Missing humble libs | `LD_LIBRARY_PATH` not set before process start | Fix the parent shell (source ROS env or use default launcher), then relaunch — do not hot-patch a running process |
+| Namespaced topic mismatch | Frame or namespace drift | Align OmniGraph namespace with Nav2 config |
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/multi_robot_namespacing.py` | Fleet demo: play-gated per-robot bridge graphs (odom, TF, scan, joint states, cmd_vel) + shared clock | `--robots NAME:PRIM_PATH [...]` `--usd_path` `--lidar_suffix` `--headless` `--test` |
+| `scripts/prerequisites.sh` | Prerequisites | positional args per script header (see script) |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/multi_robot_namespacing.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Architecture
 
@@ -31,11 +60,21 @@ The ROS 2 Bridge in Isaac Sim 6.0 is extension-based (`isaacsim.ros2.bridge`) an
 
 ### Prerequisites
 
-No manual setup is required for the default workflow. When `isaacsim.ros2.core` starts, it reads `ROS_DISTRO`; if unset, it falls back to the lightweight ROS 2 libs bundled inside the extension and sets `internal_lib_fallback=True`. The `isaac-sim.sh` / `python.sh` launchers auto-source `setup_ros_env.sh`, which exports `ROS_DISTRO`, `RMW_IMPLEMENTATION`, and `LD_LIBRARY_PATH` for the bundled libs before the process starts.
+No manual setup is required for the default workflow. When `isaacsim.ros2.core` starts, it reads `ROS_DISTRO`; if unset, it falls back to the lightweight ROS 2 libs bundled inside the extension and sets `internal_lib_fallback=True`. The `isaac-sim.sh` / `python.sh` launchers auto-source `setup_ros_env.sh`, which exports `ROS_DISTRO`, `RMW_IMPLEMENTATION`, and the bundled ROS library path before the process starts.
 
-Source a system ROS 2 install (`/opt/ros/<distro>/setup.bash`) in the parent shell only when you need message types or RMW implementations not provided by the bundled libs. On Linux, `LD_LIBRARY_PATH` must be set in the parent shell (the dynamic linker reads it at process start), which is why this step is shell-sourced and not handled by the extension at runtime.
+Source a system ROS 2 install (`/opt/ros/<distro>/setup.bash`) in the parent shell only when you need message types or RMW implementations not provided by the bundled libs. On Linux, any `LD_LIBRARY_PATH` changes must exist before launching Isaac Sim because the dynamic linker reads them at process start; changing `LD_LIBRARY_PATH` after the process is already running does not retroactively fix ROS library resolution.
 
-Pass `--no-ros-env` to bypass the auto-sourcing; in that case the parent shell must provide a working ROS 2 environment.
+Pass `--no-ros-env` to bypass the auto-sourcing; in that case the parent shell must provide a working ROS 2 environment, including any required `LD_LIBRARY_PATH` entries.
+
+### ROS Environment Decision Rule
+
+Use this precedence order when a user reports ROS 2 bridge startup or symbol-resolution issues:
+
+1. **Default path:** launch via `isaac-sim.sh` / `python.sh` and let `setup_ros_env.sh` provide the bundled ROS environment.
+2. **System ROS path:** if custom message packages or alternate RMW implementations are required, source `/opt/ros/<distro>/setup.bash` (and any overlay workspace) in the parent shell *before* launch.
+3. **Do not hot-patch `LD_LIBRARY_PATH`:** if Isaac Sim is already running with the wrong loader environment, restart from a correctly sourced shell instead of trying to repair the process in-place.
+
+Treat "export `LD_LIBRARY_PATH` and retry inside the current Isaac Sim process" as an anti-pattern; the corrective action is always "fix the parent shell, then relaunch."
 
 <!-- CODE: scripts/prerequisites.sh -->
 *[Code: `scripts/prerequisites.sh`]*
@@ -88,10 +127,57 @@ When extending this pattern, use the current `isaacsim.ros2.bridge.ROS2Publish*`
 
 ## Multi-Robot Namespacing
 
-For multi-robot scenes, each robot needs its own namespace for ROS 2 topics. The repo's multi-robot scenario (Carter on hospital/office) demonstrates the manual loading + per-robot setup pattern; `scripts/multi_robot_namespacing.py` in this skill provides the per-robot graph factory with namespaced odom / TF / cmd_vel.
+For multi-robot scenes, each robot needs its own namespace for ROS 2 topics. The repo's multi-robot scenario (Carter on hospital/office) demonstrates the manual loading + per-robot setup pattern; `scripts/multi_robot_namespacing.py` in this skill provides the full fleet bridge factory.
 
 - Scenario reference: `source/standalone_examples/api/isaacsim.ros2.bridge/carter_multiple_robot_navigation.py`
-- Per-robot graph factory: `scripts/multi_robot_namespacing.py`
+- Fleet graph factory: `scripts/multi_robot_namespacing.py`
+
+### Play-Gated Activation
+
+All bridge graphs use `OnPlaybackTick` as their execution trigger. This means:
+
+1. Graphs are created while the stage is in a stopped state (no topics published).
+2. Once `app_utils.play()` is called (or Play is pressed in the GUI), `OnPlaybackTick` fires each frame and drives all connected publishers/subscribers.
+3. Stopping playback immediately silences all topics.
+
+This is the correct pattern for fleet demos — Nav2 nodes can be launched and waiting before topics appear, and the fleet begins publishing atomically when Play starts.
+
+### API Usage
+
+```python
+from multi_robot_namespacing import setup_fleet, create_ros2_bridge_for_robot
+
+# Full fleet setup (clock + per-robot graphs)
+setup_fleet([
+    ("carter1", "/World/Carter1"),
+    ("carter2", "/World/Carter2"),
+    ("carter3", "/World/Carter3"),
+])
+
+# Or create individual robot graphs
+create_ros2_bridge_for_robot(
+    robot_name="carter1",
+    robot_prim_path="/World/Carter1",
+    lidar_prim_path="/World/Carter1/Lidar",
+    publish_joint_states=True,
+)
+```
+
+### Per-Robot Published Topics (after Play)
+
+| Topic | Message Type | Frame |
+|-------|-------------|-------|
+| `/<name>/odom` | `nav_msgs/Odometry` | `<name>/odom` → `<name>/base_link` |
+| `/<name>/scan` | `sensor_msgs/LaserScan` | `<name>/lidar_link` |
+| `/<name>/joint_states` | `sensor_msgs/JointState` | — |
+| `/tf` | `tf2_msgs/TFMessage` | robot subtree |
+| `/clock` | `rosgraph_msgs/Clock` | shared, one graph |
+
+### Subscribed Topics
+
+| Topic | Message Type | Use |
+|-------|-------------|-----|
+| `/<name>/cmd_vel` | `geometry_msgs/Twist` | Velocity commands from Nav2 |
 
 ## Nav2 Integration
 

@@ -1,25 +1,35 @@
 ---
 name: urdf-mjcf-to-usd-conversion
-description: >
-  Convert URDF and MJCF robot descriptions to USD for Isaac Sim 6 and Isaac
-  Lab via the modern `isaacsim.asset.importer.urdf` /
-  `isaacsim.asset.importer.mjcf` APIs (`URDFImporter` + `URDFImporterConfig`,
-  `MJCFImporter` + `MJCFImporterConfig`). Covers the
-  `isaacsim.asset.transformer` post-import pipeline, the
-  `usd.schema.isaac.robot_schema` application (IsaacRobotAPI, robot-type
-  tokens), URDF round-tripping via `isaacsim.asset.exporter.urdf`, RL vs
-  teleop drive setup, `make_instanceable`, and the Isaac Lab
-  `convert_urdf.py` / `convert_mjcf.py` `config.yaml` flow. XACRO is not
-  parsed by the URDF importer core; either import directly from a running
-  `robot_description` node via `isaacsim.ros2.urdf` (`RobotDefinitionReader`
-  / `File -> Import from ROS2 URDF Node`), or pre-expand offline with
-  `xacro robot.xacro > robot.urdf`.
-  Use when bringing a new robot from URDF/MJCF into Isaac Sim or Isaac Lab,
-  troubleshooting wrong masses / joint behavior / self-collision, or
-  exporting USD back to URDF.
+description: "Convert URDF/MJCF to USD for Isaac Sim and Isaac Lab. Use when importing a new robot description."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # URDF / MJCF -> USD Conversion
+
+## Purpose
+
+Import URDF and MJCF robot descriptions to USD with modern importer APIs, instanceable meshes, and drive configuration for RL or teleop.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 Two conversion paths and one export path.
 
@@ -28,6 +38,22 @@ Two conversion paths and one export path.
 | 1. Full Isaac Sim import (CLI) | RL/Lab asset, scripted batch | `isaacsim.asset.importer.urdf` / `.mjcf` via `urdf_import.py` / `mjcf_import.py` |
 | 2. Isaac Lab convert script | Isaac Lab-native config.yaml workflow | `$ISAAC_LAB_DIR/scripts/tools/convert_urdf.py` / `convert_mjcf.py` |
 | Export | USD -> URDF round-trip | `isaacsim.asset.exporter.urdf` via `urdf_export.py` |
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/urdf_importer_ros.py` | Import URDF from a live ROS 2 robot_state_publisher via URDFImporter | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/urdf_importer_ros.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## XACRO inputs
 
@@ -41,32 +67,11 @@ UI: `File -> Import from ROS2 URDF Node` (opens an import window with the same c
 
 Python (preferred over the deprecated `URDFImportFromROS2Node` Kit command):
 
-```python
-from functools import partial
+`import_urdf_from_ros(usd_out_path, merge_fixed_joints, fix_base, robot_type)` — subscribe to `robot_state_publisher`, resolve `package://` URLs, and import URDF when the description is received.
 
-from isaacsim.asset.importer.urdf import URDFImporter, URDFImporterConfig
-from isaacsim.ros2.urdf import RobotDefinitionReader
+See [`scripts/urdf_importer_ros.py`](scripts/urdf_importer_ros.py).
 
-config = URDFImporterConfig(
-    usd_path="/path/out",
-    merge_fixed_joints=True,
-    fix_base=False,
-    robot_type="Manipulator",
-)
-importer = URDFImporter()
-
-def _on_description(urdf_abs_path: str, package_found: bool) -> None:
-    # `urdf_abs_path` is a temp file with package:// already resolved.
-    config.urdf_path = urdf_abs_path
-    importer.config = config
-    importer.import_urdf()
-
-reader = RobotDefinitionReader()        # singleton
-reader.description_received_fn = partial(_on_description)
-reader.start_get_robot_description("robot_state_publisher")
-```
-
-Requires the `isaacsim.ros2.urdf` extension (depends on `isaacsim.ros2.bridge` for the ROS 2 runtime), the ROS 2 environment sourced before launching Isaac Sim, and a reachable node publishing `robot_description`. The reader runs asynchronously — the callback fires once the `GetParameters` service replies.
+Requires the `isaacsim.ros2.urdf` extension (depends on `isaacsim.ros2.bridge` for the ROS 2 runtime), a reachable node publishing `robot_description`, and Isaac Sim launched from a terminal where the robot workspace is sourced. The sourced workspace must include the robot description package and every package referenced by `package://` mesh/resource URLs; the bundled ROS 2 runtime does not provide robot-specific packages. The reader runs asynchronously — the callback fires once the `GetParameters` service replies.
 
 ### Fallback — offline xacro CLI
 

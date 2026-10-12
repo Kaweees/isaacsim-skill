@@ -1,21 +1,53 @@
 ---
 name: physics-simulation
-description: >
-  Single source of truth for physics in Isaac Sim 6.0+ / Kit 110. Covers PhysicsScene
-  config (gravity, Hz, CCD, stabilization, solver type), per-prim setup (RigidBodyAPI,
-  MassAPI, CollisionAPI, kinematic bodies, joint drives), contact materials with
-  friction/restitution reference tables, Newton solver selection (Featherstone, MuJoCo,
-  XPBD, SemiImplicit, VBD) vs PhysX, physics sensors (contact, IMU, raycast),
-  physics-to-USD readback (RigidPrim vs XformCache vs DC), and 5 worked-example
-  mechanism templates. Use when configuring a PhysicsScene; applying physics to USD
-  prims; choosing solver iterations or Newton backend; setting up contact materials,
-  joint drives, or sensors; debugging objects falling through ground; or building
-  impact/crash, vibratory feeder, gyro, cradle, or escapement mechanisms.
+description: "PhysX/Newton scene and prim setup (bodies, joints, materials, sensors). Use when configuring simulation physics."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Physics Simulation in Isaac Sim
 
+## Purpose
+
+Configure PhysicsScene and per-prim rigid bodies, collisions, materials, joint drives, solver selection, and physics sensors with worked examples.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Targets Isaac Sim 6.0+ / Kit 110. Both backends share `UsdPhysics.*`; backend-specific behavior is called out per section.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/prim_physics_setup.py` | Per-prim physics setup helpers for Isaac Sim / USD (Kit 110) | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/prim_physics_setup.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Backend selection (Kit 110)
 
@@ -127,34 +159,7 @@ px.CreateEnableStabilizationAttr().Set(False)
 
 ### RigidBody / Collision / Static / Kinematic
 
-```python
-from pxr import UsdPhysics, Gf
-
-def setup_dynamic_body(stage, prim_path, mass_kg=1.0, com_offset=None):
-    """Movable, simulated body. RigidBodyAPI + CollisionAPI on the same prim."""
-    prim = stage.GetPrimAtPath(prim_path)
-    UsdPhysics.RigidBodyAPI.Apply(prim)
-    mass_api = UsdPhysics.MassAPI.Apply(prim)
-    mass_api.CreateMassAttr().Set(mass_kg)
-    if com_offset:
-        mass_api.CreateCenterOfMassAttr().Set(Gf.Vec3f(*com_offset))
-    UsdPhysics.CollisionAPI.Apply(prim)
-    return prim
-
-def setup_static_collider(stage, prim_path):
-    """Immovable terrain, walls, fixed obstacles."""
-    prim = stage.GetPrimAtPath(prim_path)
-    UsdPhysics.CollisionAPI.Apply(prim)
-    return prim
-
-def setup_kinematic_body(stage, prim_path):
-    """Scripted motion: conveyors, elevators, vibrating bowls, escape wheels."""
-    prim = stage.GetPrimAtPath(prim_path)
-    UsdPhysics.RigidBodyAPI.Apply(prim)
-    UsdPhysics.RigidBodyAPI(prim).CreateKinematicEnabledAttr().Set(True)
-    UsdPhysics.CollisionAPI.Apply(prim)
-    return prim
-```
+Use [`scripts/prim_physics_setup.py`](scripts/prim_physics_setup.py) for dynamic, static, and kinematic body setup. It keeps the `RigidBodyAPI`, `MassAPI`, and `CollisionAPI` application sequence in one executable implementation.
 
 **Rule:** `RigidBodyAPI` + `CollisionAPI` on the **same prim**. Splitting them across parent/child causes intermittent collision failures.
 
@@ -380,10 +385,10 @@ quaternions = quat_wp.numpy()            # (N, 4) [w, x, y, z]
 
 ```python
 from isaacsim.core.experimental.prims import Articulation
-import omni.timeline
+import isaacsim.core.experimental.utils.app as app_utils
 
 robot = Articulation("/World/Robot")
-omni.timeline.get_timeline_interface().play()        # required for tensor data
+app_utils.play(commit=True)        # required for tensor data
 pos_wp, quat_wp = robot.get_world_poses()
 dof_positions  = robot.get_dof_positions().numpy()    # (N, num_dofs)
 dof_velocities = robot.get_dof_velocities().numpy()
@@ -419,6 +424,7 @@ euler = r.as_euler('xyz', degrees=True)
 9. **`get_rigid_body_state()` does not exist in Isaac Sim 5.1+**; use `RigidPrim.get_world_poses()` from `isaacsim.core.experimental.prims`.
 10. **PhysX cannot resolve sequential momentum transfer** in same-island contact chains (see [Worked Example 4: Newton's Cradle](#4-newtons-cradle--physx-same-island-contact-limitation)).
 11. **Tunneling at high spin rates**: compound colliders fail above ~50 rad/s after 5–6s. Use simpler convex hulls or higher physics Hz.
+12. **Before controller diagnosis**: verify a `PhysicsScene`, active timeline, and expected collision APIs are present.
 
 ---
 

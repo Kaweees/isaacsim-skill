@@ -1,10 +1,35 @@
 ---
 name: isaac-sim-sensor
-description: >
-  Sensor simulation in Isaac Sim 6 / Kit 110 with Replicator. Modern stack: `isaacsim.sensors.experimental.rtx` (RTX cameras, lidar, radar, acoustic)  and `isaacsim.sensors.experimental.physics` (contact, IMU, effort, joint state, raycast). Covers the `SUPPORTED_LIDAR_CONFIGS` vendor catalog (Ouster, Hesai, Velodyne, Robosense, SICK, Zvision, NVIDIA examples),  USDA asset attachment to robot mounts, custom scan-pattern authoring (emitter-state arrays), `omni.replicator.core` annotators, writers  (`BasicWriter`, `PoseWriter`, `KittiWriter`, `CosmosWriter`),  randomization, and the `isaacsim.replicator.episode_recorder` /  `isaacsim.replicator.grasping` workflows. Use when setting up RGB / depth  / segmentation / lidar / radar / acoustic / IMU / contact sensors, attaching vendor lidar/radar USD to a robot, authoring scan patterns, generating synthetic training data with domain randomization, or building multi-AOV perception pipelines.
+description: "RTX and physics sensor simulation (camera, LiDAR, IMU, contact). Use when adding, tuning, or validating sensors."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Omniverse Sensor Simulation
+
+## Purpose
+
+Simulate RTX cameras, LiDAR, radar, acoustic, and physics sensors with Replicator and the experimental sensor APIs, including vendor configs and mount attachment.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 Cameras (RGB/depth/seg/bbox), lidar/radar/acoustic, IMU/contact/effort, and Replicator domain randomization. Targets Isaac Sim 6 / Kit 110.
 
@@ -25,6 +50,24 @@ Modern namespaces (use these in new code):
 Legacy `isaacsim.sensors.physics.*` and `isaacsim.sensors.camera.Camera` classes still load but the implementation has moved to the `experimental.*` extensions; prefer those for new work.
 
 > **Migration:** update scripts using the per-family migration guides — [physics sensors](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_6_0/sensors_physics_to_experimental_physics.html#isaacsim-sensors-physics-migration), [camera sensors](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_6_0/sensors_camera_to_experimental_rtx.html#isaacsim-sensors-camera-migration), and [RTX sensors (lidar / radar / acoustic)](https://docs.isaacsim.omniverse.nvidia.com/latest/migration_guides/isaac_sim_6_0/sensors_rtx_to_experimental_rtx.html#isaacsim-sensors-rtx-migration).
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/attach_lidar_imu.py` | Attach an RTX Ouster LiDAR and a physics IMU to a robot chassis | see script --help |
+| `scripts/create_camera_sensor.py` | Camera sensor creation and annotator attachment for Isaac Sim Replicator | see script --help |
+| `scripts/lidar_gmo_writer.py` | RTX Lidar GMO (GenericModelOutput) writer pattern for Isaac Sim | see script --help |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/create_camera_sensor.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Related skills
 
@@ -119,34 +162,11 @@ To wrap a custom prim from Python, call `Lidar("/World/.../my_lidar")` (no `conf
 
 ## 1. Camera (multi-AOV capture)
 
-`RtxCamera` + `CameraSensor` is the recommended path. Fall back to plain `UsdGeom.Camera` + Replicator render product when you don't need tick-rate / lens distortion / tiled batching. See `isaac-camera` for the full surface.
+`RtxCamera` + `CameraSensor` is the camera-authoring/capture path (there is no supported non-RTX authoring path). See `isaac-camera` for the full surface.
 
-```python
-from pxr import UsdGeom, Gf
-import omni.replicator.core as rep
+`create_camera_sensor(path, focal_length, resolution, annotators=None)` — create an `RtxCamera`, set its optical parameters via the `.camera` wrapper, and return a `CameraSensor` (with its render product built and the standard RGB / depth / segmentation / bbox / normals / motion-vector annotators attached). `attach_annotators(sensor, annotators)` — thin wrapper over `CameraSensor.attach_annotators` for adding more AOVs to an existing sensor. `resolution` follows the `(height, width)` OpenCV/NumPy convention.
 
-def create_camera_sensor(stage, path, focal_length=24.0, resolution=(1280, 720)):
-    cam = UsdGeom.Camera.Define(stage, path)
-    cam.GetFocalLengthAttr().Set(focal_length)
-    cam.GetHorizontalApertureAttr().Set(36.0)
-    cam.GetVerticalApertureAttr().Set(20.25)
-    cam.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 100.0))
-    return rep.create.render_product(path, resolution)
-
-
-def attach_annotators(rp):
-    names = ["rgb", "distance_to_camera",
-             "semantic_segmentation", "instance_segmentation",
-             "motion_vectors",
-             "bounding_box_2d_tight", "bounding_box_3d",
-             "normals"]
-    ann = {}
-    for n in names:
-        init = {"colorize": True} if "segmentation" in n else {}
-        ann[n] = rep.AnnotatorRegistry.get_annotator(n, init_params=init)
-        ann[n].attach([rp])
-    return ann
-```
+See [`scripts/create_camera_sensor.py`](scripts/create_camera_sensor.py).
 
 Tiled multi-view / stereo / lens distortion: use `isaacsim.sensors.experimental.rtx.{TiledCameraSensor, SingleViewDepthCameraSensor, RtxCamera}`.
 
@@ -156,52 +176,9 @@ RTX sensors (`Lidar`, `Radar`, `Acoustic`) all produce a `GenericModelOutput` (G
 
 **Use a `Writer` for GMO.** The Replicator scheduler invokes `Writer.write` on every produced render product, so the consumer sees every event with no gaps. This is the pattern used by every canonical `source/standalone_examples/api/isaacsim.sensors.experimental.rtx/*` example (`inspect_lidar_gmo.py`, `inspect_radar_gmo.py`, `inspect_acoustic_gmo.py`, `lidar_robot_integration.py`, `resolve_lidar_object_ids.py`, `apply_nonvisual_materials.py`). The pattern below transposes directly to `Radar` / `RadarSensor` (Section 3) and `Acoustic` / `AcousticSensor` (Section 4).
 
-```python
-import omni.replicator.core as rep
-from omni.replicator.core import Writer
-from isaacsim.sensors.experimental.rtx import (
-    Lidar, LidarSensor, parse_generic_model_output_data,
-    SUPPORTED_LIDAR_CONFIGS,
-)
+`create_lidar_with_gmo_writer(path, config, variant, simulation_app)` — create an RTX lidar, define a `GmoInspectWriter` that attaches the `GenericModelOutput` annotator, register it, and run the update loop.
 
-lidar = Lidar.create(
-    path="/World/lidar",
-    config="OS1",                          # see SUPPORTED_LIDAR_CONFIGS (Section 0)
-    variant="OS1_REV6_32ch20hz512res",
-    aux_output_level="FULL",               # NONE | BASIC | EXTRA | FULL
-    tick_rate=20.0,                        # Hz; None preserves authored value
-    accumulate_outputs=True,               # True = full scan per output
-)
-
-# Sensor brings no annotators — the writer brings its own GMO annotator.
-sensor = LidarSensor(lidar, annotators=[])
-
-
-class GmoInspectWriter(Writer):
-    def __init__(self):
-        self.data_structure = "renderProduct"
-        self.annotators = [rep.annotators.get("GenericModelOutput")]
-
-    def write(self, data):
-        if "renderProducts" not in data:
-            return
-        for _rp, rp_data in data["renderProducts"].items():
-            raw = rp_data.get("GenericModelOutput")
-            if isinstance(raw, dict):
-                raw = raw.get("data")
-            gmo = parse_generic_model_output_data(raw)
-            if gmo.numElements > 0:
-                ...    # use gmo.x / gmo.y / gmo.z / gmo.scalar / gmo.matId / ...
-
-
-rep.WriterRegistry.register(GmoInspectWriter)
-sensor.attach_writer("GmoInspectWriter")
-
-import omni.timeline
-omni.timeline.get_timeline_interface().play()
-while simulation_app.is_running():
-    simulation_app.update()
-```
+See [`scripts/lidar_gmo_writer.py`](scripts/lidar_gmo_writer.py).
 
 For real-time viewport visualization (not data capture), attach the built-in `draw-point-cloud` writer instead:
 

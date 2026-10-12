@@ -1,23 +1,35 @@
 ---
 name: usd-composition-architecture
-description: >
-  NVIDIA's USD asset composition pattern for Isaac Sim — how robot assets are split into
-  a binary geometry crate plus a set of human-editable USDA layers (base, instances,
-  materials, physics, physx, mujoco, robot, interface) connected via composition arcs
-  (payload, reference, sublayer, variant). Covers the "binary for meshes, USDA for
-  everything else" rule, headless RL optimization by skipping appearance, and the
-  Asset Transformer pipeline that produces this layout.
-  Use when: building new robot or environment assets for Isaac Sim, restructuring an
-  existing asset with the Asset Transformer, optimizing RL training startup time and
-  VRAM by skipping appearance payloads, debugging why physics edits in a USDA do not
-  apply, debugging joint limits or mass properties, creating asset variants with
-  different configs or materials.
-  Triggers on: USD payload composition, layered USD, physics payload, appearance payload,
-  USDA vs USD, USDA vs USDC, geometries.usdc, RL optimization payload, composition arcs,
-  Asset Transformer, Isaac Sim Asset Structure, USD asset structure.
+description: "Layered USD composition with physics and appearance payloads. Use when structuring sim-ready robot or environment assets."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # USD Composition Architecture for Isaac Sim
+
+## Purpose
+
+Author sim-ready USD with layered payloads (base, instances, materials, physics, robot) following NVIDIA composition conventions.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
 
 ## When to use
 

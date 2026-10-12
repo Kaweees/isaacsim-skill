@@ -19,10 +19,33 @@ This file evolves with user feedback. Each criterion is tagged with its origin.
 | R2 | Expected output files exist and are non-empty | error | baseline |
 | R3 | No GPU memory leaks (VRAM returns to baseline after close) | warning | baseline |
 
-## Visual Quality (Level 4) — evolves with feedback
+## Level 4 (evolves with feedback)
 
-_No criteria yet. Will be populated from user feedback._
+### Render Mode
 
-## Data Quality (Level 4) — evolves with feedback
+| ID | Criterion | Severity | Origin |
+|----|-----------|----------|--------|
+| L4-RM1 | Iteration renders use `RayTracedLighting`; `PathTracing` reserved for hero shots only | error | SKILL.md baseline |
+| L4-RM2 | ACES tonemap enabled (carb `rtx.post.tonemap.op` = 4) | warning | SKILL.md baseline |
+| L4-RM3 | `filmIso` set per scene type: 200 (default), 600 (deep-aisle/indoor), 400 (aerial) | warning | SKILL.md baseline |
+| L4-RM4 | Pixel variance > 15 (flat image = missing shadows) | warning | SKILL.md baseline |
+| L4-RM5 | Mean RGB 80–160; reject < 20 (too dark) or > 240 (overexposed) | error | SKILL.md baseline |
 
-_No criteria yet. Will be populated from user feedback._
+### SimulationApp Size
+
+| ID | Criterion | Severity | Origin |
+|----|-----------|----------|--------|
+| L4-SA1 | `SimulationApp` config includes explicit `width` and `height` | error | SKILL.md baseline |
+| L4-SA2 | Resolution matches capture intent (render product dims = app dims); mismatch causes swapchain-capture size artifacts | error | SKILL.md baseline |
+| L4-SA3 | Headless mode (`headless=True`) set when running on server/VM/CI | warning | SKILL.md baseline |
+
+### RL Output Formats
+
+| ID | Criterion | Severity | Origin |
+|----|-----------|----------|--------|
+| L4-RL1 | Checkpoint named `model_XXXX.zip` or `policy_only_XXXX.pt`; reject `policy.pt` or unnamed files | error | SKILL.md baseline |
+| L4-RL2 | Training run produces reward curve (`log.csv`, `wandb` URL, or `results.json` with episode data) | error | SKILL.md baseline |
+| L4-RL3 | Logs include `episode/reward_mean` and `train/value_loss` | error | SKILL.md baseline |
+| L4-RL4 | Multiple seeds run for valid comparison (recommend seeds 42, 123, 456) | warning | SKILL.md baseline |
+| L4-RL5 | `PYTHONUNBUFFERED=1` set so training logs stream in real time | warning | SKILL.md baseline |
+| L4-RL6 | GPU memory logged (`torch.cuda.memory_allocated()/1e6`) to W&B or equivalent | warning | SKILL.md baseline |

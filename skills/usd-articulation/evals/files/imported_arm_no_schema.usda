@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    defaultPrim = "Robot"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "Robot" (
+    prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+) {
+    def Xform "base_link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+    ) {
+        float physics:mass = 5.0
+
+        def Xform "link_1" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        ) {
+            def PhysicsRevoluteJoint "joint_1" (
+                prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+            ) {
+                uniform token physics:axis = "Z"
+                rel physics:body0 = </Robot/base_link>
+                rel physics:body1 = </Robot/base_link/link_1>
+            }
+        }
+    }
+}

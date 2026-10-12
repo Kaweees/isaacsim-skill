@@ -15,7 +15,7 @@ asset_cx, asset_cy, asset_cz_min = bbox["cx"], bbox["cy"], bbox["cz"]
 # Corrected translation
 translate = Gf.Vec3d(
     target_x - asset_cx,   # X offset correction
-    target_y - asset_cy,   # Y offset correction
+    target_y - asset_cy,   # Y offset correction  
     -asset_cz_min          # Ground the asset (base at Z=0)
 )
 ```
@@ -118,7 +118,7 @@ def obb_overlap_2d(center_a, half_ext_a, angle_a, center_b, half_ext_b, angle_b)
     def get_axes(angle):
         c, s = math.cos(angle), math.sin(angle)
         return [(c, s), (-s, c)]
-
+    
     def project(center, half_ext, angle, axis):
         axes = get_axes(angle)
         corners = []
@@ -128,7 +128,7 @@ def obb_overlap_2d(center_a, half_ext_a, angle_a, center_b, half_ext_b, angle_b)
                 cy = center[1] + sx*half_ext[0]*axes[0][1] + sy*half_ext[1]*axes[1][1]
                 corners.append(cx*axis[0] + cy*axis[1])
         return min(corners), max(corners)
-
+    
     for angle in (angle_a, angle_b):
         for axis in get_axes(angle):
             min_a, max_a = project(center_a, half_ext_a, angle_a, axis)
@@ -173,7 +173,7 @@ def dubins_path_length(start, goal, min_radius):
     theta = math.atan2(dy, dx)
     alpha = (start[2] - theta) % (2*math.pi)
     beta = (goal[2] - theta) % (2*math.pi)
-
+    
     # LSL path (Left-Straight-Left) — one of 6 Dubins path types
     p_sq = 2 + d*d - 2*math.cos(alpha-beta) + 2*d*(math.sin(alpha)-math.sin(beta))
     if p_sq < 0: return float('inf')
@@ -206,7 +206,7 @@ def fov_to_focal(fov_deg, sensor_width_mm=36.0):
 
 # Common warehouse camera settings:
 # 12mm → 84.1° FOV — ultra-wide, top-down overview
-# 14mm → 75.4° FOV — wide overview
+# 14mm → 75.4° FOV — wide overview  
 # 18mm → 63.4° FOV — general purpose
 # 24mm → 49.1° FOV — corridor view
 # 35mm → 34.4° FOV — detail/equipment close-up
@@ -322,9 +322,9 @@ def total_travel_distance(pick_list, rack_positions, dock_position):
     total = 0
     remaining = list(pick_list)
     while remaining:
-        nearest = min(remaining, key=lambda p:
+        nearest = min(remaining, key=lambda p: 
             math.sqrt((rack_positions[p][0]-pos[0])**2 + (rack_positions[p][1]-pos[1])**2))
-        total += math.sqrt((rack_positions[nearest][0]-pos[0])**2 +
+        total += math.sqrt((rack_positions[nearest][0]-pos[0])**2 + 
                           (rack_positions[nearest][1]-pos[1])**2)
         pos = rack_positions[nearest]
         remaining.remove(nearest)
@@ -387,7 +387,7 @@ Result: Tighter fit than AABB, especially for elongated objects (conveyors, rack
 `bracing_factor = rack_height / base_width`
 - If factor > 2.0: seismic bracing required (cross-bracing between uprights)
 - If factor > 3.0: engineering review mandatory
-- Standard: EN 15512 (European), RMI/ANSI MH16.1 (US)
+- Standards: EN 15512 for Europe; Rack Manufacturers Institute ANSI MH16.1 for the US
 
 ### Bin Packing Complexity
 - 2D bin packing: NP-hard. First-Fit Decreasing Height (FFDH) achieves 1.7× optimal.
@@ -474,7 +474,7 @@ Each block has exact W×D×H dimensions. Real assets have different native sizes
 Must compute per-axis scale factors:
 ```python
 sx = block_w / asset_w
-sy = block_d / asset_d
+sy = block_d / asset_d  
 sz = block_h / asset_h
 # Clamp to prevent absurd distortion
 sx, sy, sz = [max(0.05, min(s, 30.0)) for s in [sx, sy, sz]]
@@ -554,7 +554,7 @@ dist = (line_len / 2) / math.tan(fov_h / 2) * 1.3  # 30% margin
 
 # Place camera at 35° orbit, 25° elevation from center of group
 center_y = (first_y + last_y) / 2
-eye = (dist * cos(elev) * sin(angle), center_y - dist * cos(elev) * cos(angle),
+eye = (dist * cos(elev) * sin(angle), center_y - dist * cos(elev) * cos(angle), 
        center_z + dist * sin(elev))
 ```
 
@@ -604,3 +604,4 @@ for face in faces:
 Launch Isaac Sim ONCE with a persistent command loop. Never kill/restart between renders.
 All renders go through `/tmp/gtc2_cmd.json` → poll `/tmp/gtc2_status.json`.
 Stage edits via `action: "exec"`. This is non-negotiable.
+

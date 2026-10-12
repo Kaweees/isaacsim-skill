@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    subLayers = [
+        @./physics_mass.usda@,
+        @./override_mass.usda@
+    ]
+)
+
+def Xform "Asset" {
+    def Mesh "Mesh" {
+    }
+}

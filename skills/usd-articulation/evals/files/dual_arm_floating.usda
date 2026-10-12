@@ -1,0 +1,111 @@
+#usda 1.0
+(
+    defaultPrim = "Robot"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+# Deliberately broken dual-arm asset for usd-articulation-001:
+# - Competing ArticulationRootAPI on each arm (none on chassis)
+# - No FixedJoint from chassis to arm mounts (arms float)
+# - Enough rigid bodies / joints for validate_articulation root+graph checks
+
+def Xform "Robot" {
+    def Xform "Chassis" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+    ) {
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        float physics:mass = 50
+
+        def Cube "ChassisCollision" {
+            double size = 0.6
+            double3 xformOp:scale = (1.2, 0.8, 0.3)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }
+
+        def Xform "Mount_L" {
+            double3 xformOp:translate = (0.4, 0, 0.2)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "Mount_R" {
+            double3 xformOp:translate = (-0.4, 0, 0.2)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Xform "Arm_L" (
+        prepend apiSchemas = ["PhysicsArticulationRootAPI", "PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    ) {
+        double3 xformOp:translate = (0.4, 0, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        float physics:mass = 5
+
+        def Xform "link0" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+        ) {
+            float physics:mass = 2
+            def Cube "viz" {
+                double size = 0.1
+            }
+        }
+
+        def Xform "link1" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+        ) {
+            double3 xformOp:translate = (0, 0, 0.25)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            float physics:mass = 1.5
+            def Cube "viz" {
+                double size = 0.08
+            }
+        }
+
+        def PhysicsRevoluteJoint "joint_link0_link1" {
+            rel physics:body0 = </Robot/Arm_L/link0>
+            rel physics:body1 = </Robot/Arm_L/link1>
+            point3f physics:localPos0 = (0, 0, 0.05)
+            point3f physics:localPos1 = (0, 0, -0.05)
+            float physics:lowerLimit = -1.57
+            float physics:upperLimit = 1.57
+        }
+    }
+
+    def Xform "Arm_R" (
+        prepend apiSchemas = ["PhysicsArticulationRootAPI", "PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    ) {
+        double3 xformOp:translate = (-0.4, 0, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        float physics:mass = 5
+
+        def Xform "link0" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+        ) {
+            float physics:mass = 2
+            def Cube "viz" {
+                double size = 0.1
+            }
+        }
+
+        def Xform "link1" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsCollisionAPI"]
+        ) {
+            double3 xformOp:translate = (0, 0, 0.25)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            float physics:mass = 1.5
+            def Cube "viz" {
+                double size = 0.08
+            }
+        }
+
+        def PhysicsRevoluteJoint "joint_link0_link1" {
+            rel physics:body0 = </Robot/Arm_R/link0>
+            rel physics:body1 = </Robot/Arm_R/link1>
+            point3f physics:localPos0 = (0, 0, 0.05)
+            point3f physics:localPos1 = (0, 0, -0.05)
+            float physics:lowerLimit = -1.57
+            float physics:upperLimit = 1.57
+        }
+    }
+}

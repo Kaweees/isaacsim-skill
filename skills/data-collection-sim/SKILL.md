@@ -1,23 +1,56 @@
 ---
 name: data-collection-sim
-description: >
-  Build headless static-scene data collection pipelines using Isaac Sim 6 /
-  Kit 110 Replicator. Produces annotated RGB, depth, segmentation, bounding
-  boxes, and pose data via `BasicWriter`, `KittiWriter`, `CocoWriter`,
-  `CosmosWriter`, `FPSWriter` (from `omni.replicator.core`) and `PoseWriter`,
-  `DataVisualizationWriter` (from `isaacsim.replicator.writers`). Uses
-  `isaacsim.core.experimental.utils.stage` to author the scene and either
-  `rep.functional.modify.semantics` or
-  `isaacsim.core.experimental.utils.semantics.add_labels` to label prims for
-  annotators. Use when generating synthetic data, creating training datasets,
-  or building SDG pipelines. For mobile-robot trajectory-driven SDG see
-  `mobility-gen`; for grasp / teleop / episode-record workflows see
-  `isaacsim.replicator.*` pointers below.
+description: "Headless Replicator SDG for static scenes (writers, poses, Kitti). Use when collecting annotated training data. Do NOT use for mobile-robot SDG (use mobility-gen)."
+license: Apache-2.0
+metadata:
+  author: Renato Gasoto
 ---
 
 # Data Collection Simulation
 
+## Purpose
+
+Produce annotated static-scene synthetic data with Replicator writers (RGB, depth, segmentation, pose, Kitti/COCO variants) in headless batch runs.
+
+## Prerequisites
+
+- Built Isaac Sim (`$ISAAC_SIM_DIR` or `_build/linux-x86_64/release`).
+- NVIDIA GPU with a current driver (`nvidia-smi`).
+- Shell env contract from `isaac-sim-orchestrator`: `$ISAAC_SIM_DIR`, `$ISAAC_LAB_DIR`, `$WORKSPACE_DIR`.
+
+## Limitations
+
+- Targets Isaac Sim 6 / Kit 110 unless a section states otherwise.
+- Does not replace official NVIDIA documentation for unsupported edge cases.
+
+## Troubleshooting
+
+| Error / symptom | Cause | Solution |
+|---|---|---|
+| Extension or import not found | Wrong `$ISAAC_SIM_DIR` or stale build | Point env vars at `_build/linux-x86_64/release` or rebuild |
+| Black or empty frames | Missing lights or non-RTX render mode | Add dome/key light; confirm RTX / PathTracing settings |
+| Hang on stage load or first render | MDL compile or oversized stage | Follow isolation steps in `isaac-sim-troubleshooting` |
+
 Build headless SDG pipelines using Isaac Sim 6.0 Replicator. Outputs annotated frames (RGB, depth, segmentation, bbox, pose) to disk via writers.
+
+## Available Scripts
+
+| Script | Purpose | Arguments |
+|---|---|---|
+| `scripts/minimal_sdg_pipeline.py` | Minimal static-scene SDG pipeline using Isaac Sim Replicator | see script --help |
+| `scripts/shelf_pose_grid_capture.py` | Shelf pose grid capture for static-scene SDG | CLI flags via argparse (see script --help) |
+| `scripts/validate_sdg_output.sh` | Validate sdg output | positional args per script header (see script) |
+| `scripts/warehouse_sdg.py` | Warehouse sdg | CLI flags via argparse (see script --help) |
+
+## Running scripts
+
+From agent runtimes that expose skill execution helpers, invoke helpers with `run_script()`:
+
+```python
+run_script("scripts/minimal_sdg_pipeline.py", args=["--help"])
+```
+
+From a built Isaac Sim tree, run the same file with `./python.sh` (Linux) or `python.bat` (Windows) from `_build/*/release`, or execute shell helpers directly when they do not require the simulator.
 
 ## Related Skills
 
@@ -111,51 +144,16 @@ Core annotators available via `rep.annotators.get(name)`:
 
 ## Minimal Pipeline
 
-```python
-# 1. Scene
-rep.orchestrator.set_capture_on_play(False)
-carb.settings.get_settings().set("rtx/post/dlss/execMode", 2)  # DLSS Quality
-assets_root = get_assets_root_path()
-stage_utils.open_stage(assets_root + "/Isaac/Environments/Simple_Warehouse/full_warehouse.usd")
+`run_minimal_sdg_pipeline(output_dir, num_frames, rt_subframes)` — open a warehouse stage, tag a prop with semantic labels, create a camera, attach a BasicWriter, and run the capture loop.
 
-# 2. Semantic labels — add a referenced prop and tag it for annotators.
-stage_utils.add_reference_to_stage(
-    usd_path=assets_root + "/Isaac/Props/YCB/Axis_Aligned/003_cracker_box.usd",
-    path="/World/MyObj",
-)
-prim = stage_utils.get_current_stage().GetPrimAtPath("/World/MyObj")
-# Either API writes the UsdSemantics LabelsAPI schema on the prim:
-add_labels(prim, labels=["cracker_box"], taxonomy="class")
-# or, equivalently:
-# rep.functional.modify.semantics(prim, {"class": "cracker_box"}, mode="add")
+See [`scripts/minimal_sdg_pipeline.py`](scripts/minimal_sdg_pipeline.py).
 
-# 3. Camera + render product
-cam = rep.functional.create.camera(position=(3, 3, 2), look_at=(0, 0, 0), name="DataCam")
-rp = rep.create.render_product(cam, (1280, 720), name="main_view")
+## Full warehouse pipeline
 
-# 4. Writer (explicit backend form)
-backend = rep.backends.get("DiskBackend")
-backend.initialize(output_dir="/tmp/sdg_output")
-writer = rep.writers.get("BasicWriter")
-writer.initialize(
-    backend=backend,
-    rgb=True,
-    bounding_box_2d_tight=True,
-    semantic_segmentation=True,
-    distance_to_image_plane=True,
-)
-writer.attach(rp)
+For a config-driven, headless warehouse capture (YAML config, `--num-frames`, `--output-dir`), see [`scripts/warehouse_sdg.py`](scripts/warehouse_sdg.py). Validate the produced dataset with [`scripts/validate_sdg_output.sh`](scripts/validate_sdg_output.sh):
 
-# 5. Capture loop with randomization (static scene: delta_time=0.0 freezes timeline)
-for i in range(NUM_FRAMES):
-    # Randomize object pose, camera, lights here
-    rep.orchestrator.step(delta_time=0.0, rt_subframes=32)
-
-# 6. Cleanup
-rep.orchestrator.wait_until_complete()
-writer.detach()
-rp.destroy()
-simulation_app.close()
+```bash
+bash scripts/validate_sdg_output.sh <output_dir> [expected_frames]
 ```
 
 ## Domain Randomization
@@ -256,7 +254,7 @@ objects:
 
 Paths relative to `$ISAAC_SIM_DIR` (install root or `<this-repo>` for a source build) and `$ISAAC_LAB_DIR`:
 
-- API examples: `$ISAAC_SIM_DIR/source/standalone_examples/api/isaacsim.replicator.examples/sdg_getting_started_0[1-5].py`, `sdg_workflow_0[12].py`, `multi_camera.py`, `motion_blur.py`, `cosmos_writer_simple.py`, `simready_assets_sdg.py`, `sdg_deformables.py`, `sdg_geomsubset.py`, `subscribers_and_events.py`, `custom_event_and_write.py`, `custom_fps_writer_annotator.py`.
+- API examples: `$ISAAC_SIM_DIR/source/standalone_examples/api/isaacsim.replicator.examples/sdg_getting_started_0[1-5].py`, `sdg_workflow_0[12].py`, `multi_camera.py`, `motion_blur_raytracing.py`, `motion_blur_pathtracing.py`, `cosmos_writer_simple.py`, `simready_assets_sdg.py`, `sdg_deformables.py`, `sdg_geomsubset.py`, `subscribers_and_events.py`, `custom_event_and_write.py`, `custom_fps_writer_annotator.py`.
 - Scene-based SDG: `$ISAAC_SIM_DIR/source/standalone_examples/replicator/scene_based_sdg/`
 - Object-based SDG: `$ISAAC_SIM_DIR/source/standalone_examples/replicator/object_based_sdg/`
 - Augmentation pipelines: `$ISAAC_SIM_DIR/source/standalone_examples/replicator/augmentation/`
