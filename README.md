@@ -1,6 +1,8 @@
 # isaacsim-skill
 
-A collection of [Agent Skills](https://agentskills.io/) for NVIDIA Isaac Sim which covers how to build scenes, convert robots, run physics, navigate, render, collect synthetic data, bridge to ROS 2, and more.
+A collection of [Agent Skills](https://agentskills.io/) for NVIDIA Isaac Sim which covers how to build scenes, convert robots, run physics, navigate, render, collect synthetic data, bridge to ROS 2, stream to a browser, and more.
+
+The skills are mirrored from the [`skills/` directory of the Isaac Sim repository](https://github.com/isaac-sim/IsaacSim/tree/main/skills), currently synced to Isaac Sim 6.2.0.
 
 ## Install
 

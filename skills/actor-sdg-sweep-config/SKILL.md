@@ -158,6 +158,9 @@ python3 skills/actor-sdg-sweep-config/scripts/batch_actor_sdg.py \
 
 Before removing `--dry-run`, report the selected configurations, output locations, and expected runtime. Actor SDG
 execution can replace generated data, so run it only after the user approves the batch.
+Execution also requires `--allow-trusted-scripts`. Explain that configurations and referenced assets can execute
+Python with the user's permissions, and obtain explicit acknowledgement that all selected configurations and
+referenced assets are trusted. Do not add this flag automatically. Dry-run mode does not require it.
 
 ### 6. Report the result
 
